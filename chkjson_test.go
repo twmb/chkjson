@@ -1,6 +1,7 @@
 package chkjson
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"math/rand"
@@ -8,99 +9,135 @@ import (
 	"testing"
 )
 
-// This test covers validating all function calls and most of their edge cases.
+// This test covers most edge cases of validating and compacting .
 func TestMost(t *testing.T) {
-	var typTests = []struct {
-		in       string
-		expValid bool
-	}{
-		{"", false},
-		{"   ", false},
-		{" z", false},
+	var tests = []string{
+		"",
+		"   ",
+		" z",
+		" 1  1",
+		" 1  {}",
+		" 1  []",
+		" 1  true",
+		" 1  null",
+		" 1  \"n\"",
 
 		// string
-		{`"foo"`, true},
-		{"\"\xe2\x80\xa8\xe2\x80\xa9\"", true}, // line-sep and paragraph-sep
-		{` "\uaaaa" `, true},
-		{` "\`, false},
-		{` "\z`, false},
-		{" \"f\x00o\"", false},
-		{` "foo`, false},
-		{` "\uazaa" `, false},
+		`"foo"`,
+		"\"\xe2\x80\xa8\xe2\x80\xa9\"", // line-sep and paragraph-sep
+		` "\uaaaa" `,
+		` "\`,
+		` "\z`,
+		" \"f\x00o\"",
+		` "foo`,
+		` "\uazaa" `,
 
 		// number
-		{"1", true},
-		{"  0 ", true},
-		{" 0e1 ", true},
-		{" 0e+0 ", true},
-		{" -0e+0 ", true},
-		{"-0", true},
-		{"1e6", true},
-		{"1e+6", true},
-		{"-1e+6", true},
-		{"-0e+6", true},
-		{" -103e+1 ", true},
-		{"-0.01e+006", true},
-		{"-z", false},
-		{"-", false},
-		{"1e", false},
-		{"1e+", false},
-		{" 03e+1 ", false},
-		{" 1e.1 ", false},
-		{" 00 ", false},
-		{"1.e3", false},
-		{"01e+6", false},
-		{"-0.01e+0.6", false},
+		"1",
+		"  0 ",
+		" 0e1 ",
+		" 0e+0 ",
+		" -0e+0 ",
+		"-0",
+		"1e6",
+		"1e+6",
+		"-1e+6",
+		"-0e+6",
+		" -103e+1 ",
+		"-0.01e+006",
+		"-z",
+		"-",
+		"1e",
+		"1e+",
+		" 03e+1 ",
+		" 1e.1 ",
+		" 00 ",
+		"1.e3",
+		"01e+6",
+		"-0.01e+0.6",
 
 		// object
-		{"{}", true},
-		{`{"foo": 3}`, true},
-		{` {}    `, true},
-		{strings.Repeat(`{"f":`, 1000) + "{}" + strings.Repeat("}", 1000), true},
-		{`{"foo": [{"":3, "4": "3"}, 4, {}], "t_wo": 1}`, true},
-		{` {"foo": 2,"fudge}`, false},
-		{`{{"foo": }}`, false},
-		{`{{"foo": [{"":3, 4: "3"}, 4, "5": {4}]}, "t_wo": 1}`, false},
-		{"{", false},
-		{`{"foo"`, false},
-		{`{"foo",f}`, false},
-		{`{"foo",`, false},
-		{`{"foo"f`, false},
-		{"{}}", false},
+		"{}",
+		`{"foo": 3}`,
+		` {}    `,
+		strings.Repeat(`{"f":`, 1000) + "{}" + strings.Repeat("}", 1000),
+		`{"foo": [{"":3, "4": "3"}, 4, {}], "t_wo": 1}`,
+		` {"foo": 2,"fudge}`,
+		`{{"foo": }}`,
+		`{{"foo": [{"":3, 4: "3"}, 4, "5": {4}]}, "t_wo": 1}`,
+		"{",
+		`{"foo"`,
+		`{"foo",f}`,
+		`{"foo",`,
+		`{"foo"f`,
+		"{}}",
 
 		// array
-		{`[]`, true},
-		{strings.Repeat("[", 1000) + strings.Repeat("]", 1000), true},
-		{`[1, 2, 3, 4, {}]`, true},
-		{`[`, false},
-		{`[1,`, false},
-		{`[1a`, false},
-		{`[]]`, false},
+		`[]`,
+		`[ 1, {}]`,
+		strings.Repeat("[", 1000) + strings.Repeat("]", 1000),
+		`[1, 2, 3, 4, {}]`,
+		`[`,
+		`[1,`,
+		`[1a`,
+		`[]]`,
 
 		// boolean
-		{"true", true},
-		{"   true ", true},
-		{"false", true},
-		{"  true f", false},
-		{"fals", false},
-		{"falsee", false},
+		"true",
+		"   true ",
+		"false",
+		"  true f",
+		"fals",
+		"falsee",
 
 		// null
-		{"null ", true},
-		{" null ", true},
-		{" nulll ", false},
+		"null ",
+		" null ",
+		" nulll ",
 	}
 
-	for i, test := range typTests {
-		in := []byte(test.in)
-		isValid := Valid(in)
-		truth := json.Valid(in)
+	for i, test := range tests {
+		in := []byte(test)
+		val := Valid(in)
+		expVal := json.Valid(in)
 
-		if isValid != truth {
-			t.Errorf("#%d «%s»: got valid? %v, truth? %v", i, test.in, isValid, truth)
+		pact, pactVal := AppendCompact(nil, in)
+		pactP, pactValP := AppendCompactJSONP(nil, in)
+
+		// Check that our Valid, AppendCompact, and AppendCompactJSONP
+		// calls return properly.
+		if val != expVal {
+			t.Errorf("#%d «%s»: got valid? %v, truth? %v", i, test, val, expVal)
 		}
-		if isValid != test.expValid {
-			t.Errorf("#%d «%s»: got valid? %v, expected? %v", i, test.in, isValid, test.expValid)
+		if pactVal != expVal {
+			t.Errorf("#%d «%s»: compact got valid? %v, truth? %v", i, test, pactVal, expVal)
+		}
+		if pactValP != expVal {
+			t.Errorf("#%d «%s»: compact (JSONP) got valid? %v, truth? %v", i, test, pactValP, expVal)
+		}
+		if !expVal {
+			continue
+		}
+
+		// If this is valid JSON, check that our compact calls compact
+		// appropriately.
+		buf := new(bytes.Buffer)
+		json.Compact(buf, in)
+		expPactP := buf.Bytes()
+
+		if !bytes.Equal(pactP, expPactP) {
+			t.Errorf("#%d «%s»: compact (JSONP) got «%s», exp «%s»", i, test, pactP, expPactP)
+		}
+
+		// We do not validate compacting e280a{8,9} here. We have a
+		// dedicated test for that and json.Compact does not support
+		// our non-JSONP behavior.
+		if bytes.Contains(in, []byte("\xe2\x80")) {
+			continue
+		}
+
+		if !bytes.Equal(pact, expPactP) {
+			t.Errorf("#%d «%s»: compact got «%s», exp «%s»", i, test, pact, expPactP)
 		}
 	}
 }
@@ -119,7 +156,7 @@ func TestValidRand(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		b := genBig()
 		if !Valid(b) {
-			t.Errorf("«%s» should be valid", b)
+			t.Error("unexpected invalid")
 		}
 	}
 }

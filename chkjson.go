@@ -4,14 +4,14 @@
 // The standard library allocates when validating JSON and allocates more if
 // the JSON is very nested. This library only allocates if the JSON is more
 // than 32 levels deep (objects and arrays). Other minor differences allow this
-// library to be anywhere from 5% to 25% faster at validation than
-// encoding/json.
+// library's Valid to be anywhere from 5% to 25% faster than encoding/json.
 //
-// The standard library also ensures that compact JSON is JavaScript safe. This
-// is necessary if the JSON will ever end up in JSONP, but is not always
+// The standard library ensures that compact JSON is JavaScript safe. This is
+// necessary if the JSON will ever end up in JSONP, but is not always
 // necessary. This library provides a faster AppendCompactJSONP function to
 // imitate the stdlib's Compact, and further provides AppendCompact for the
-// same speed with a no-allocation guarantee.
+// same speed with a no-allocation guarantee. This library's AppendCompact is
+// around 50% faster than encoding/json's Compact.
 //
 // In essence, this library aims to provide slightly faster and allocation free
 // alternatives to encoding/json for a few specific use cases.
@@ -159,17 +159,6 @@ func (p *parser) peekAfterSpace() (byte, bool) {
 	}
 }
 
-func validateFirst(b []byte, first byte) bool {
-	p := parser{in: b}
-
-	c, ok := p.peekAfterSpace()
-	if !ok || c != first {
-		return false
-	}
-
-	return p.validate()
-}
-
 // validate validates JSON starting from the knowledge that some non-space
 // character exists in the parser.
 //
@@ -254,10 +243,8 @@ func (p *parser) beginStrOrEmpty() bool {
 		p.parseState.replace(parseObjVal)
 		return p.endVal()
 	}
-	if !p.startAndFinStr() {
-		return false
-	}
-	return p.endVal()
+	p.skip()
+	return c == '"' && p.finStr() && p.endVal()
 }
 
 // beganStrFin finishes a started string and falls into endVal.

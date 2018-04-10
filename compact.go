@@ -4,14 +4,17 @@ import (
 	"unsafe"
 )
 
-// AppendCompact appends the compact form of src to dst if src is entirely JSON
-// and returns the updated dst and whether all of src was valid.
+// AppendCompact appends the compact form of src to dst if src is entirely
+// JSON, returning the updated dst and whether all of src was valid.
 //
-// This function assumes ownership of dst. If the src contains invalid JSON,
-// dst may have an invalid byte.
+// This function assumes and returns ownership of dst. If the src contains
+// invalid JSON, dst may have an invalid byte.
 //
-// It is valid to pass (src[:0], src) to this function if you do not need the
-// contents of src when it is invalid.
+// It is valid to pass (src[:0], src) to this function; src will be overwritten
+// with any valid JSON. If src is invalid, the returned slice may have an
+// invalid byte. This function is guaranteed not to add bytes to the input
+// JSON, meaning this function will not reallocate the input slice if it is
+// used as both src and dst.
 //
 // This function does not escape line-separator or paragraph-separator
 // characters, which can be problematic for JSONP. If conversion is necessary,
@@ -155,10 +158,8 @@ func (p *compactor) beginStrOrEmpty() bool {
 		p.parseState.replace(parseObjVal)
 		return p.endVal()
 	}
-	if !p.startAndFinStr() {
-		return false
-	}
-	return p.endVal()
+	p.keepskip()
+	return c == '"' && p.finStr() && p.endVal()
 }
 
 func (p *compactor) beganStrFin() bool {
