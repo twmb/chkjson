@@ -21,11 +21,7 @@ import (
 // use AppendCompactJSONP.
 func AppendCompact(dst, src []byte) ([]byte, bool) {
 	p := compactor{parser: parser{in: src}, dst: dst}
-	_, ok := p.peekAfterSpace()
-	if !ok {
-		return dst, false
-	}
-	return p.dst, p.run()
+	return p.dst, p.compact()
 }
 
 // AppendCompactJSONP is similar to AppendCompact, but this function escapes
@@ -41,22 +37,16 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 // source was valid JSON.
 func AppendCompactJSONP(dst, src []byte) ([]byte, bool) {
 	p := compactor{parser: parser{in: src}, jsonp: true, dst: dst}
-	_, ok := p.peekAfterSpace()
-	if !ok {
-		return dst, false
-	}
-	return p.dst, p.run()
+	return p.dst, p.compact()
 }
 
 // compactor appends to dst as we parse non-space bytes. Most of the parsing
 // code is copied verbatim.
 //
-// The general pattern here is to call p.keep whenever we take a byte from the
-// internal parser with any of p.next, p.afterSpace, p.peek+p.skip, or p.tryN.
+// The general pattern here is to keep a byte in dst whenever it is
+// non-whitespace while parsing.
 //
-// If this package's code were more general (i.e. like encoding/json), we could
-// avoid the duplication, but that would either force us to allocate or force a
-// huge slowdown from an unnecessary switch statement.
+// While it is tedious to have this code copied, it allows us great perf.
 type compactor struct {
 	parser
 
@@ -65,127 +55,152 @@ type compactor struct {
 	dst []byte
 }
 
-func (p *compactor) keep(c byte) { // called after both next and afterSpace
-	p.dst = append(p.dst, c)
-}
-
-func (p *compactor) trykeep3(c1, c2, c3 byte) bool {
-	if p.try3(c1, c2, c3) {
-		p.dst = append(p.dst, c1, c2, c3)
-		return true
-	}
-	return false
-}
-
-func (p *compactor) trykeep4(c1, c2, c3, c4 byte) bool {
-	if p.try4(c1, c2, c3, c4) {
-		p.dst = append(p.dst, c1, c2, c3, c4)
-		return true
-	}
-	return false
-}
-
-func (p *compactor) keepskip() { // for keep+skip
-	p.dst = append(p.dst, p.on())
-	p.skip()
-}
-
-func (p *compactor) run() bool {
+func (p *compactor) compact() bool {
 	var c byte
-	ok := true
-	for ok {
-		if c, ok = p.afterSpace(); !ok {
-			return p.parseState.empty()
+	for p.at < len(p.in) {
+		c = p.in[p.at]
+		if !isSpace(c) {
+			goto start
 		}
-		ok = p.beginVal(c)
+		p.at++
 	}
 	return false
-}
 
-func (p *compactor) beginVal(c byte) bool {
-	p.keep(c)
+start:
+	for p.at < len(p.in) { // afterSpace
+		c = p.in[p.at]
+		p.at++
+		if !isSpace(c) {
+			p.dst = append(p.dst, c)
+			goto beginVal
+		}
+	}
+	return p.stack.empty()
 
+beginVal:
 	switch c {
 	case '{':
-		p.parseState.push(parseObjKey)
-		return p.beginStrOrEmpty()
+		if p.stack.end < 32 { // push
+			p.stack.base[p.stack.end] = parseObjKey
+			p.stack.end++
+		} else {
+			p.stack.ext = append(p.stack.ext, parseObjKey)
+		}
+		goto beginStrOrEmpty
 
 	case '[':
-		p.parseState.push(parseArrVal)
-		return p.beginValOrEmpty()
+		if p.stack.end < 32 { // push
+			p.stack.base[p.stack.end] = parseArrVal
+			p.stack.end++
+		} else {
+			p.stack.ext = append(p.stack.ext, parseArrVal)
+		}
+		goto beginValOrEmpty
 
 	case '"':
-		return p.beganStrFin()
+		goto finStr
 
 	case '-':
-		return p.finNeg()
+		goto finNeg
 
 	case '0':
-		return p.fin0()
+		goto fin0
 
 	case 't':
-		return p.finTrue()
+		goto finTrue
 
 	case 'f':
-		return p.finFalse()
+		goto finFalse
 
 	case 'n':
-		return p.finNull()
+		goto finNull
 	}
 	if isNat(c) {
-		return p.fin1()
+		goto fin1
 	}
 	return false
-}
 
-func (p *compactor) beginValOrEmpty() bool {
-	c, ok := p.peekAfterSpace()
-	return ok && (c != ']' || p.endVal())
-}
-
-func (p *compactor) beginStrOrEmpty() bool {
-	c, ok := p.peekAfterSpace()
-	if !ok {
-		return false
-	}
-	if c == '}' {
-		p.parseState.replace(parseObjVal)
-		return p.endVal()
+beginStrOrEmpty:
+	for p.at < len(p.in) { // afterSpace
+		c = p.in[p.at]
+		p.at++
+		if !isSpace(c) {
+			break
+		}
 	}
 	p.dst = append(p.dst, c)
-	p.at++
-	return c == '"' && p.finStr() && p.endVal()
-}
-
-func (p *compactor) beganStrFin() bool {
-	return p.finStr() && p.endVal()
-}
-
-func (p *compactor) finStr() bool {
-start:
-	c, ok := p.next()
-	// we must wait to keep this; see blow
-	if !ok {
-		return false
+	if c == '}' {
+		l := len(p.stack.ext)
+		if l == 0 {
+			p.stack.end--
+		} else {
+			p.stack.ext = p.stack.ext[:l-1]
+		}
+		goto endVal
 	}
 	if c == '"' {
-		p.keep(c)
-		return true
+		goto finStr
+	}
+	return false
+
+beginValOrEmpty:
+	for p.at < len(p.in) {
+		c = p.in[p.at]
+		if !isSpace(c) {
+			if c == ']' {
+				goto endVal
+			}
+			goto start
+		}
+		p.at++
+	}
+	return false
+
+finStr:
+	if p.at >= len(p.in) {
+		return false
+	}
+	c = p.in[p.at]
+	p.at++
+	if c == '"' {
+		p.dst = append(p.dst, c)
+		goto endVal
 	}
 	if c == '\\' {
-		p.keep(c)
-		if ok = p.finStrEsc(); !ok {
+		p.dst = append(p.dst, c)
+
+		if p.at >= len(p.in) {
 			return false
 		}
-		goto start
+		c = p.in[p.at]
+		p.at++
+		p.dst = append(p.dst, c) // pre-add the escaped byte
+
+		switch c {
+		case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
+			goto finStr
+		case 'u':
+			if p.at+3 < len(p.in) {
+				c1 := p.in[p.at]
+				c2 := p.in[p.at+1]
+				c3 := p.in[p.at+2]
+				c4 := p.in[p.at+3]
+				if isHex(c1) && isHex(c2) && isHex(c3) && isHex(c4) {
+					p.dst = append(p.dst, c1, c2, c3, c4)
+					p.at += 4
+					goto finStr
+				}
+			}
+		}
+		return false
+
 	}
 	if c < 0x20 {
 		return false
 	}
-
-	if c != 0xe2 || !p.jsonp {
-		p.keep(c)
-		goto start
+	if !p.jsonp || c != 0xe2 {
+		p.dst = append(p.dst, c)
+		goto finStr
 	}
 
 	// encoding/json's Compact changes U+2028 and U+2029 (0xe280a8 and
@@ -197,186 +212,254 @@ start:
 	//
 	// If this is e280a{8,9}, we set dst to be a new slice unless we have
 	// three spare bytes saved from compacting.
-	n1, n2, ok := p.peek2()
-	if n1 != 0x80 || n2&^1 != 0xa8 {
-		p.keep(c)
-		goto start
+	if p.at+1 >= len(p.in) {
+		p.dst = append(p.dst, c)
+		goto finStr
 	}
 
-	srcPtr := uintptr(unsafe.Pointer(&p.in[p.at-1])) // sub one to get where we _were_
-	dstPtr := uintptr(unsafe.Pointer(&p.dst[len(p.dst)-1]))
+	if n1, n2 := p.in[p.at], p.in[p.at+1]; n1 != 0x80 || n2&^1 != 0xa8 {
+		p.dst = append(p.dst, c)
+		goto finStr
+	} else {
+		// dstPtr, at most, can be just before srcPtr. We have not
+		// appended the new character yet.
+		//
+		// We need to reallocate if our three new characters will put
+		// us on or after srcPtr.
+		//
+		// This conditional is very ugly to avoid declaration problems
+		// with goto.
+		if srcPtr, dstPtr :=
+			uintptr(unsafe.Pointer(&p.in[p.at-1])), // sub one to get where we _were_
+			uintptr(unsafe.Pointer(&p.dst[len(p.dst)-1])); dstPtr < srcPtr && dstPtr+3 >= srcPtr {
 
-	// dstPtr, at most, can be just before srcPtr. We have not appended the
-	// new character yet.
-	//
-	// We need to reallocate if our three new characters will put us on
-	// or after srcPtr.
-	if dstPtr < srcPtr && dstPtr+3 >= srcPtr {
-		new := make([]byte, len(p.dst), cap(p.in))
-		copy(new, p.dst)
-		p.dst = new
+			new := make([]byte, len(p.dst), cap(p.in))
+			copy(new, p.dst)
+			p.dst = new
+		}
+
+		p.dst = append(p.dst, `\u202`...)
+		p.dst = append(p.dst, ('8' | n2&1))
+		p.at += 2
+
+		goto finStr
 	}
 
-	p.dst = append(p.dst, `\u202`...)
-	p.keep('8' | n2&1)
-	p.at += 2
-
-	goto start
-}
-
-func (p *compactor) finStrEsc() bool {
-	c, ok := p.next()
-	if !ok {
+finNeg:
+	if p.at >= len(p.in) {
 		return false
 	}
-	p.keep(c)
-	switch c {
-	case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
-		return true
-	case 'u':
-		c1, c2, c3, c4, ok := p.next4()
-		if ok && isHex(c1) && isHex(c2) && isHex(c3) && isHex(c4) {
-			p.dst = append(p.dst, c1, c2, c3, c4)
-			return true
-		}
+	c = p.in[p.at]
+	p.at++
+	p.dst = append(p.dst, c)
+	if c == '0' {
+		goto fin0
+	}
+	if isNat(c) {
+		goto fin1
 	}
 	return false
-}
 
-func (p *compactor) finNeg() bool {
-	c, ok := p.next()
-	if !ok {
-		return false
-	}
-	p.keep(c)
-	return c == '0' && p.fin0() || isNat(c) && p.fin1()
-}
-
-func (p *compactor) fin1() bool {
-	for !p.done() {
-		if !isNum(p.on()) {
-			return p.fin0()
+fin1:
+	for p.at < len(p.in) {
+		c = p.in[p.at]
+		if !isNum(c) {
+			goto fin0
 		}
-		p.keepskip()
+		p.dst = append(p.dst, c)
+		p.at++
 	}
-	return p.endVal()
-}
+	goto endVal
 
-func (p *compactor) fin0() bool {
-	c, ok := p.peek()
-	if !ok {
-		return p.endVal()
+fin0:
+	if p.at >= len(p.in) {
+		goto endVal
 	}
+	c = p.in[p.at]
 	if c == '.' {
-		p.keepskip()
-		return p.finDot()
+		p.dst = append(p.dst, c)
+		p.at++
+		goto finDot
 	}
 	if isE(c) {
-		p.keepskip()
-		return p.finE()
+		p.dst = append(p.dst, c)
+		p.at++
+		goto finE
 	}
-	return p.endVal()
-}
+	goto endVal
 
-func (p *compactor) finDot() bool {
-	c, ok := p.next()
-	if !ok || !isNum(c) { // first char after dot must be num
+finDot:
+	if p.at >= len(p.in) {
 		return false
 	}
-	p.keep(c)
-
-	for !p.done() && isNum(p.on()) { // consume all nums
-		p.keepskip()
-	}
-
-	if !p.done() && isE(p.on()) {
-		p.keepskip()
-		return p.finE()
-	}
-	return p.endVal()
-}
-
-func (p *compactor) finE() bool {
-	c, ok := p.next()
-	if !ok {
+	c = p.in[p.at]
+	p.at++
+	if !isNum(c) { // first char after dot must be num
 		return false
 	}
-	if c == '+' || c == '-' {
-		p.keep(c) // keep before overwriting c
-		if c, ok = p.next(); !ok {
-			return false
+	p.dst = append(p.dst, c)
+
+	for p.at < len(p.in) { // consume all nums
+		c := p.in[p.at]
+		if !isNum(c) {
+			break
+		}
+		p.dst = append(p.dst, c)
+		p.at++
+	}
+
+	if p.at < len(p.in) {
+		c := p.in[p.at]
+		if isE(p.in[p.at]) {
+			p.dst = append(p.dst, c)
+			p.at++
+			goto finE
 		}
 	}
+	goto endVal
+
+finE:
+	if p.at >= len(p.in) {
+		return false
+	}
+	c = p.in[p.at]
+	p.at++
+
+	if c == '+' || c == '-' {
+		p.dst = append(p.dst, c) // keep before overwriting c
+		if p.at >= len(p.in) {
+			return false
+		}
+		c = p.in[p.at]
+		p.at++
+	}
+
 	if !isNum(c) { // first after e (and +/-) must be num
 		return false
 	}
+	p.dst = append(p.dst, c)
 
-	p.keep(c)
-
-	for !p.done() && isNum(p.on()) { // consume all nums
-		p.keepskip()
+	for p.at < len(p.in) { // consume all nums
+		c := p.in[p.at]
+		if !isNum(c) {
+			break
+		}
+		p.dst = append(p.dst, c)
+		p.at++
 	}
-	return p.endVal()
-}
+	goto endVal
 
-func (p *compactor) finTrue() bool {
-	return p.trykeep3('r', 'u', 'e') && p.endVal()
-}
+finTrue:
+	if p.at+2 < len(p.in) &&
+		p.in[p.at] == 'r' &&
+		p.in[p.at+1] == 'u' &&
+		p.in[p.at+2] == 'e' {
 
-func (p *compactor) finNull() bool {
-	return p.trykeep3('u', 'l', 'l') && p.endVal()
-}
+		p.at += 3
+		p.dst = append(p.dst, 'r', 'u', 'e')
+		goto endVal
+	}
+	return false
 
-func (p *compactor) finFalse() bool {
-	return p.trykeep4('a', 'l', 's', 'e') && p.endVal()
-}
+finFalse:
+	if p.at+3 < len(p.in) &&
+		p.in[p.at] == 'a' &&
+		p.in[p.at+1] == 'l' &&
+		p.in[p.at+2] == 's' &&
+		p.in[p.at+3] == 'e' {
 
-func (p *compactor) endVal() bool {
-start:
-	if p.parseState.empty() {
-		return p.remSpace()
+		p.at += 4
+		p.dst = append(p.dst, 'a', 'l', 's', 'e')
+		goto endVal
+	}
+	return false
+
+finNull:
+	if p.at+2 < len(p.in) &&
+		p.in[p.at] == 'u' &&
+		p.in[p.at+1] == 'l' &&
+		p.in[p.at+2] == 'l' {
+
+		p.at += 3
+		p.dst = append(p.dst, 'u', 'l', 'l')
+		goto endVal
+	}
+	return false
+
+endVal:
+	if p.stack.empty() {
+		for p.at < len(p.in) {
+			c = p.in[p.at]
+			p.at++
+			if !isSpace(c) {
+				return false
+			}
+		}
+		goto start
 	}
 
-	c, ok := p.afterSpace()
-	if !ok { // if parseState is not empty, we need another character
-		return false
+	for p.at < len(p.in) { // if parseState is not empty, we need another character
+		c = p.in[p.at]
+		p.at++
+		if !isSpace(c) {
+			p.dst = append(p.dst, c)
+			goto finVal
+		}
 	}
-	p.keep(c)
+	return false
 
-	switch p.parseState.pop() {
+finVal:
+	switch p.stack.pop() {
 	case parseObjKey:
 		if c == ':' {
-			p.parseState.push(parseObjVal)
-			return true
+			if p.stack.end < 32 { // push
+				p.stack.base[p.stack.end] = parseObjVal
+				p.stack.end++
+			} else {
+				p.stack.ext = append(p.stack.ext, parseObjVal)
+			}
+			goto start
 		}
 
 	case parseObjVal:
 		switch c {
 		case ',':
-			p.parseState.push(parseObjKey)
-			if !p.startAndFinStr() {
+			if p.stack.end < 32 { // push
+				p.stack.base[p.stack.end] = parseObjKey
+				p.stack.end++
+			} else {
+				p.stack.ext = append(p.stack.ext, parseObjKey)
+			}
+			for p.at < len(p.in) { // afterSpace
+				c = p.in[p.at]
+				p.at++
+				if isSpace(c) {
+					continue
+				}
+				if c == '"' {
+					p.dst = append(p.dst, c)
+					goto finStr
+				}
 				return false
 			}
-			goto start
 		case '}':
-			goto start
+			goto endVal
 		}
 
 	case parseArrVal:
 		switch c {
 		case ',':
-			p.parseState.push(parseArrVal)
-			return true
-		case ']':
+			if p.stack.end < 32 { // push
+				p.stack.base[p.stack.end] = parseArrVal
+				p.stack.end++
+			} else {
+				p.stack.ext = append(p.stack.ext, parseArrVal)
+			}
 			goto start
+		case ']':
+			goto endVal
 		}
 	}
 
 	return false
-}
-
-func (p *compactor) startAndFinStr() bool {
-	c, ok := p.afterSpace()
-	p.keep(c)
-	return ok && c == '"' && p.finStr()
 }
