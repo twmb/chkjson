@@ -23,6 +23,8 @@ func TestMost(t *testing.T) {
 		" 1  \"n\"",
 
 		// string
+		"\"\xe2",       // begin line-sep but invalid finish
+		"\"\xe2\x79\"", // begin line-sep but not actually line sep
 		`"foo"`,
 		"\"\xe2\x80\xa8\xe2\x80\xa9\"", // line-sep and paragraph-sep
 		` "\uaaaa" `,
@@ -36,6 +38,7 @@ func TestMost(t *testing.T) {
 		"1",
 		"  0 ",
 		" 0e1 ",
+		"1.",
 		" 0e+0 ",
 		" -0e+0 ",
 		"-0",
@@ -85,6 +88,7 @@ func TestMost(t *testing.T) {
 		// boolean
 		"true",
 		"   true ",
+		"tru",
 		"false",
 		"  true f",
 		"fals",
@@ -93,6 +97,7 @@ func TestMost(t *testing.T) {
 		// null
 		"null ",
 		" null ",
+		"nul",
 		" nulll ",
 	}
 
