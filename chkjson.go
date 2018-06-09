@@ -81,7 +81,7 @@ type parser struct {
 // know what the rest of it must parse as.
 //
 // We use a giant state-machine function and inline many functions for
-// significant performance gain (on the order of 50% faster).
+// significant performance gain (on the order of 100% faster).
 
 // Valid returns whether b is valid JSON.
 func Valid(b []byte) bool {
