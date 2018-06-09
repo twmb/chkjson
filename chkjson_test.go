@@ -143,7 +143,7 @@ func TestMost(t *testing.T) {
 }
 
 func BenchmarkValid(b *testing.B) {
-	in := []byte(`{"foo": 1, "bar": [{"first": 1, "second": 2, "last": 9999}, {}]}`)
+	in := []byte(`{"foo": 1, "bar": [{"fi\uabcdrst": 1,  "se\\cond": 2, "last": 9999}, {}]}`)
 	if !Valid(in) {
 		b.Fatal("benchmark JSON is not valid!")
 	}

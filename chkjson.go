@@ -84,7 +84,7 @@ func (p *parseStateStack) empty() bool {
 
 type parser struct {
 	in []byte
-	at int // remove in go1.11: https://go-review.googlesource.com/c/go/+/105258
+	at int
 
 	parseState parseStateStack
 }
@@ -92,46 +92,60 @@ type parser struct {
 func (p *parser) done() bool { return p.at == len(p.in) }
 func (p *parser) on() byte   { return p.in[p.at] }
 func (p *parser) skip()      { p.at++ }
-func (p *parser) c() byte    { c := p.on(); p.skip(); return c }
 
 func (p *parser) peek() (byte, bool) {
-	if p.done() {
-		return 0, false
+	if p.at < len(p.in) {
+		return p.in[p.at], true
 	}
-	return p.on(), true
+	return 0, false
 }
 
 func (p *parser) peek2() (byte, byte, bool) {
-	if p.at+2 <= len(p.in) {
+	if p.at+1 < len(p.in) {
 		return p.in[p.at], p.in[p.at+1], true
 	}
 	return 0, 0, false
 }
 
-func (p *parser) next() (byte, bool) {
-	if p.done() {
-		return 0, false
+func (p *parser) next4() (byte, byte, byte, byte, bool) {
+	if p.at+3 < len(p.in) {
+		c1, c2, c3, c4 := p.in[p.at], p.in[p.at+1], p.in[p.at+2], p.in[p.at+3]
+		p.at += 4
+		return c1, c2, c3, c4, true
 	}
-	return p.c(), true
+	return 0, 0, 0, 0, false
+}
+
+func (p *parser) next() (byte, bool) {
+	if p.at < len(p.in) {
+		c := p.in[p.at]
+		p.at++
+		return c, true
+	}
+	return 0, false
 }
 
 func (p *parser) try3(c1, c2, c3 byte) bool {
-	return p.at+3 <= len(p.in) &&
-		p.c() == c1 &&
-		p.c() == c2 &&
-		p.c() == c3
+	r := p.at+2 < len(p.in) &&
+		p.in[p.at] == c1 &&
+		p.in[p.at+1] == c2 &&
+		p.in[p.at+2] == c3
+	p.at += 3
+	return r
 }
 
 func (p *parser) try4(c1, c2, c3, c4 byte) bool {
-	return p.at+4 <= len(p.in) &&
-		p.c() == c1 &&
-		p.c() == c2 &&
-		p.c() == c3 &&
-		p.c() == c4
+	r := p.at+3 < len(p.in) &&
+		p.in[p.at] == c1 &&
+		p.in[p.at+1] == c2 &&
+		p.in[p.at+2] == c3 &&
+		p.in[p.at+3] == c4
+	p.at += 4
+	return r
 }
 
 func isSpace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+	return c <= ' ' && (c == ' ' || c == '\t' || c == '\r' || c == '\n')
 }
 
 func (p *parser) afterSpace() (byte, bool) {
@@ -225,13 +239,7 @@ func (p *parser) beginVal(c byte) bool {
 
 func (p *parser) beginValOrEmpty() bool {
 	c, ok := p.peekAfterSpace()
-	if !ok {
-		return false
-	}
-	if c == ']' {
-		return p.endVal()
-	}
-	return true
+	return ok && (c != ']' || p.endVal())
 }
 
 func (p *parser) beginStrOrEmpty() bool {
@@ -282,12 +290,8 @@ func (p *parser) finStrEsc() bool {
 	case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
 		return true
 	case 'u':
-		for i := 0; i < 4; i++ {
-			if c, ok = p.next(); !ok || !isHex(c) {
-				return false
-			}
-		}
-		return true
+		c1, c2, c3, c4, ok := p.next4()
+		return ok && isHex(c1) && isHex(c2) && isHex(c3) && isHex(c4)
 	}
 	return false
 }
@@ -310,16 +314,7 @@ func isE(c byte) bool {
 
 func (p *parser) finNeg() bool {
 	c, ok := p.next()
-	if !ok {
-		return false
-	}
-	if c == '0' {
-		return p.fin0()
-	}
-	if isNat(c) {
-		return p.fin1()
-	}
-	return false
+	return ok && (c == '0' && p.fin0() || isNat(c) && p.fin1())
 }
 
 func (p *parser) fin1() bool {
