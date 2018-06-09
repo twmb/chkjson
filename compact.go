@@ -140,13 +140,7 @@ func (p *compactor) beginVal(c byte) bool {
 
 func (p *compactor) beginValOrEmpty() bool {
 	c, ok := p.peekAfterSpace()
-	if !ok {
-		return false
-	}
-	if c == ']' {
-		return p.endVal()
-	}
-	return true
+	return ok && (c != ']' || p.endVal())
 }
 
 func (p *compactor) beginStrOrEmpty() bool {
@@ -158,7 +152,8 @@ func (p *compactor) beginStrOrEmpty() bool {
 		p.parseState.replace(parseObjVal)
 		return p.endVal()
 	}
-	p.keepskip()
+	p.dst = append(p.dst, c)
+	p.at++
 	return c == '"' && p.finStr() && p.endVal()
 }
 
@@ -239,13 +234,11 @@ func (p *compactor) finStrEsc() bool {
 	case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
 		return true
 	case 'u':
-		for i := 0; i < 4; i++ {
-			if c, ok = p.next(); !ok || !isHex(c) {
-				return false
-			}
-			p.keep(c)
+		c1, c2, c3, c4, ok := p.next4()
+		if ok && isHex(c1) && isHex(c2) && isHex(c3) && isHex(c4) {
+			p.dst = append(p.dst, c1, c2, c3, c4)
+			return true
 		}
-		return true
 	}
 	return false
 }
@@ -256,13 +249,7 @@ func (p *compactor) finNeg() bool {
 		return false
 	}
 	p.keep(c)
-	if c == '0' {
-		return p.fin0()
-	}
-	if isNat(c) {
-		return p.fin1()
-	}
-	return false
+	return c == '0' && p.fin0() || isNat(c) && p.fin1()
 }
 
 func (p *compactor) fin1() bool {
