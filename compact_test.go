@@ -104,7 +104,7 @@ func TestCompact(t *testing.T) {
 }
 
 func BenchmarkCompact(b *testing.B) {
-	orig := []byte(`{"foo": 1, "bar": [{"first": 1, "second": 2, "last": 9999}, {}]}`)
+	orig := []byte(`{"foo": 1, "bar": [{"fi\uabcdrst": 1,  "se\\cond": 2, "last": 9999}, {}]}`)
 	a := make([]byte, 0, len(orig))
 	for i := 0; i < b.N; i++ {
 		AppendCompact(a[:0], orig)
