@@ -3,15 +3,16 @@
 //
 // The standard library allocates when validating JSON and allocates more if
 // the JSON is very nested. This library only allocates if the JSON is more
-// than 32 levels deep (objects and arrays). Other minor differences allow this
-// library's Valid to be usually around 50% faster than encoding/json.
+// than 32 levels deep (objects and arrays). Other minor to major differences
+// allow this library's Valid to over 2x faster as encoding/json's.
 //
 // The standard library ensures that compact JSON is JavaScript safe. This is
 // necessary if the JSON will ever end up in JSONP, but is not always
 // necessary. This library provides a faster AppendCompactJSONP function to
 // imitate the stdlib's Compact, and further provides AppendCompact for the
-// same speed with a no-allocation guarantee. This library's AppendCompact is
-// around 60%+ faster than encoding/json's Compact.
+// same speed with a no-allocation (no JSONP escaping) guarantee. This
+// library's AppendCompact is usually around 4x faster than encoding/json's
+// Compact.
 //
 // In essence, this library aims to provide faster and allocation free
 // alternatives to encoding/json for a few specific use cases.
