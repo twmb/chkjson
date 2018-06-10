@@ -18,6 +18,11 @@
 // alternatives to encoding/json for a few specific use cases.
 package chkjson
 
+import (
+	"reflect"
+	"unsafe"
+)
+
 type parseState byte
 
 const (
@@ -91,6 +96,17 @@ type parser struct {
 //
 // We use a giant state-machine function and inline many functions for
 // significant performance gain (on the order of 100% faster).
+
+// ValidString returns whether s is valid JSON.
+func ValidString(s string) bool {
+	var b []byte
+	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
+		Data: ((*reflect.StringHeader)(unsafe.Pointer(&s))).Data,
+		Len:  len(s),
+		Cap:  len(s),
+	}
+	return Valid(b)
+}
 
 // Valid returns whether b is valid JSON.
 func Valid(b []byte) bool {

@@ -1,6 +1,7 @@
 package chkjson
 
 import (
+	"reflect"
 	"unsafe"
 )
 
@@ -24,6 +25,18 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 	return p.dst, p.compact()
 }
 
+// AppendCompactString is exactly like AppendCompact but for compacting
+// strings.
+func AppendCompactString(dst []byte, src string) ([]byte, bool) {
+	var b []byte
+	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
+		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
+		Len:  len(src),
+		Cap:  len(src),
+	}
+	return AppendCompact(dst, b)
+}
+
 // AppendCompactJSONP is similar to AppendCompact, but this function escapes
 // line-separator and paragraph-separator characters. See the documentation of
 // AppendCompact for more details.
@@ -38,6 +51,18 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 func AppendCompactJSONP(dst, src []byte) ([]byte, bool) {
 	p := compactor{parser: parser{in: src}, jsonp: true, dst: dst}
 	return p.dst, p.compact()
+}
+
+// AppendCompactJSONPString is exactly like AppendCompactJSONP but for
+// compacting strings.
+func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
+	var b []byte
+	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
+		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
+		Len:  len(src),
+		Cap:  len(src),
+	}
+	return AppendCompactJSONP(dst, b)
 }
 
 // compactor appends to dst as we parse non-space bytes. Most of the parsing
