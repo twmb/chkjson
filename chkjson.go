@@ -43,12 +43,12 @@ type parseStateStack struct {
 }
 
 func (p *parseStateStack) push(s parseState) {
-	if p.end < 32 { // push
+	if p.end < 32 {
 		p.base[p.end] = s
 		p.end++
-	} else {
-		p.ext = append(p.ext, s)
+		return
 	}
+	p.ext = append(p.ext, s)
 }
 
 func (p *parseStateStack) pop() parseState { // faster to not inline in endVal
@@ -124,7 +124,7 @@ func Valid(b []byte) bool {
 	return false
 
 start:
-	if p.at >= len(p.in) { // afterSpace
+	if p.at >= len(p.in) {
 		return p.stack.empty()
 	}
 	c = p.in[p.at]
@@ -343,7 +343,9 @@ finNull:
 	}
 	return false
 
-endVal: // most things parsed fall into endVal
+endVal:
+	nop() // allow a preemption before ending a value
+
 	if p.stack.empty() {
 		for p.at < len(p.in) { // afterSpace
 			c = p.in[p.at]
@@ -423,3 +425,15 @@ func isNat(c byte) bool {
 func isE(c byte) bool {
 	return c == 'e' || c == 'E'
 }
+
+// With our large state machine having nearly no function calls, we have no
+// preemption point for garbage collection. We need to allow some. The
+// following two changed nop's seem to work wonders in local testing of
+// creating a ton of garbage and timing GC's while calling valid. Without the
+// nop above (and the nested nop2), the GC's in testing are 50x slower.
+
+//go:noinline
+func nop2() {}
+
+//go:noinline
+func nop() { nop2() }

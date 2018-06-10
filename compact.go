@@ -404,6 +404,8 @@ finNull:
 	return false
 
 endVal:
+	nop() // allow preemption
+
 	if p.stack.empty() {
 		for p.at < len(p.in) {
 			c = p.in[p.at]
