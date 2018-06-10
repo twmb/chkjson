@@ -1,6 +1,7 @@
 package chkjson
 
 import (
+	"reflect"
 	"unsafe"
 )
 
@@ -24,6 +25,18 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 	return p.dst, p.compact()
 }
 
+// AppendCompactString is exactly like AppendCompact but for compacting
+// strings.
+func AppendCompactString(dst []byte, src string) ([]byte, bool) {
+	var b []byte
+	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
+		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
+		Len:  len(src),
+		Cap:  len(src),
+	}
+	return AppendCompact(dst, b)
+}
+
 // AppendCompactJSONP is similar to AppendCompact, but this function escapes
 // line-separator and paragraph-separator characters. See the documentation of
 // AppendCompact for more details.
@@ -38,6 +51,18 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 func AppendCompactJSONP(dst, src []byte) ([]byte, bool) {
 	p := compactor{parser: parser{in: src}, jsonp: true, dst: dst}
 	return p.dst, p.compact()
+}
+
+// AppendCompactJSONPString is exactly like AppendCompactJSONP but for
+// compacting strings.
+func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
+	var b []byte
+	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
+		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
+		Len:  len(src),
+		Cap:  len(src),
+	}
+	return AppendCompactJSONP(dst, b)
 }
 
 // compactor appends to dst as we parse non-space bytes. Most of the parsing
@@ -59,7 +84,9 @@ func (p *compactor) compact() bool {
 	var c byte
 	for p.at < len(p.in) {
 		c = p.in[p.at]
-		if !isSpace(c) {
+		switch c {
+		case ' ', '\r', '\n', '\t':
+		default:
 			goto start
 		}
 		p.at++
@@ -67,34 +94,27 @@ func (p *compactor) compact() bool {
 	return false
 
 start:
-	for p.at < len(p.in) { // afterSpace
-		c = p.in[p.at]
-		p.at++
-		if !isSpace(c) {
-			p.dst = append(p.dst, c)
-			goto beginVal
-		}
+	if p.at >= len(p.in) { // afterSpace
+		return p.stack.empty()
 	}
-	return p.stack.empty()
+	c = p.in[p.at]
+	p.at++
 
-beginVal:
+	if c <= ' ' {
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+			goto start
+		}
+		return false
+	}
+	p.dst = append(p.dst, c)
+
 	switch c {
 	case '{':
-		if p.stack.end < 32 { // push
-			p.stack.base[p.stack.end] = parseObjKey
-			p.stack.end++
-		} else {
-			p.stack.ext = append(p.stack.ext, parseObjKey)
-		}
+		p.stack.push(parseObjKey)
 		goto beginStrOrEmpty
 
 	case '[':
-		if p.stack.end < 32 { // push
-			p.stack.base[p.stack.end] = parseArrVal
-			p.stack.end++
-		} else {
-			p.stack.ext = append(p.stack.ext, parseArrVal)
-		}
+		p.stack.push(parseArrVal)
 		goto beginValOrEmpty
 
 	case '"':
@@ -124,35 +144,32 @@ beginStrOrEmpty:
 	for p.at < len(p.in) { // afterSpace
 		c = p.in[p.at]
 		p.at++
-		if !isSpace(c) {
-			break
+		switch c {
+		case ' ', '\r', '\t', '\n':
+		case '}':
+			p.dst = append(p.dst, c)
+			p.stack.pop()
+			goto endVal
+		case '"':
+			p.dst = append(p.dst, c)
+			goto finStr
+		default:
+			return false
 		}
-	}
-	p.dst = append(p.dst, c)
-	if c == '}' {
-		l := len(p.stack.ext)
-		if l == 0 {
-			p.stack.end--
-		} else {
-			p.stack.ext = p.stack.ext[:l-1]
-		}
-		goto endVal
-	}
-	if c == '"' {
-		goto finStr
 	}
 	return false
 
 beginValOrEmpty:
 	for p.at < len(p.in) {
 		c = p.in[p.at]
-		if !isSpace(c) {
-			if c == ']' {
-				goto endVal
-			}
+		switch c {
+		case ' ', '\r', '\t', '\n':
+			p.at++
+		case ']':
+			goto endVal
+		default:
 			goto start
 		}
-		p.at++
 	}
 	return false
 
@@ -391,7 +408,9 @@ endVal:
 		for p.at < len(p.in) {
 			c = p.in[p.at]
 			p.at++
-			if !isSpace(c) {
+			switch c {
+			case ' ', '\r', '\t', '\n':
+			default:
 				return false
 			}
 		}
@@ -401,7 +420,9 @@ endVal:
 	for p.at < len(p.in) { // if parseState is not empty, we need another character
 		c = p.in[p.at]
 		p.at++
-		if !isSpace(c) {
+		switch c {
+		case ' ', '\r', '\n', '\t':
+		default:
 			p.dst = append(p.dst, c)
 			goto finVal
 		}
@@ -412,35 +433,25 @@ finVal:
 	switch p.stack.pop() {
 	case parseObjKey:
 		if c == ':' {
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseObjVal
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseObjVal)
-			}
+			p.stack.push(parseObjVal)
 			goto start
 		}
 
 	case parseObjVal:
 		switch c {
 		case ',':
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseObjKey
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseObjKey)
-			}
+			p.stack.push(parseObjKey)
 			for p.at < len(p.in) { // afterSpace
 				c = p.in[p.at]
 				p.at++
-				if isSpace(c) {
-					continue
-				}
-				if c == '"' {
+				switch c {
+				case ' ', '\t', '\r', '\n':
+				case '"':
 					p.dst = append(p.dst, c)
 					goto finStr
+				default:
+					return false
 				}
-				return false
 			}
 		case '}':
 			goto endVal
@@ -449,12 +460,7 @@ finVal:
 	case parseArrVal:
 		switch c {
 		case ',':
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseArrVal
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseArrVal)
-			}
+			p.stack.push(parseArrVal)
 			goto start
 		case ']':
 			goto endVal

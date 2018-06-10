@@ -102,24 +102,52 @@ func TestMost(t *testing.T) {
 	}
 
 	for i, test := range tests {
+		// copy the original string to ensure it is not modified in our
+		// unsafe code.
+		origBytes := []byte(test)
+		orig := string(origBytes)
+
 		in := []byte(test)
 		val := Valid(in)
+		strVal := ValidString(test)
 		expVal := json.Valid(in)
 
-		pact, pactVal := AppendCompact(nil, in)
-		pactP, pactValP := AppendCompactJSONP(nil, in)
-
-		// Check that our Valid, AppendCompact, and AppendCompactJSONP
-		// calls return properly.
+		if test != orig {
+			t.Errorf("#%d: ValidString modified the original string!", i)
+		}
+		if val != strVal {
+			t.Errorf("#%d «%s»: valid? %v, valid as string? %v", i, test, val, strVal)
+		}
 		if val != expVal {
 			t.Errorf("#%d «%s»: got valid? %v, truth? %v", i, test, val, expVal)
+		}
+
+		pact, pactVal := AppendCompact(nil, in)
+		pactStr, pactValStr := AppendCompactString(nil, test)
+
+		if test != orig {
+			t.Errorf("#%d: AppendCompactString modified the original string!", i)
 		}
 		if pactVal != expVal {
 			t.Errorf("#%d «%s»: compact got valid? %v, truth? %v", i, test, pactVal, expVal)
 		}
+		if pactVal != pactValStr {
+			t.Errorf("#%d «%s»: compact got valid? %v, valid as string? %v", i, test, pactVal, pactValStr)
+		}
+
+		pactP, pactValP := AppendCompactJSONP(nil, in)
+		pactPStr, pactValPStr := AppendCompactJSONPString(nil, test)
+
+		if test != orig {
+			t.Error("AppendCompactJSONPString modified the original string!")
+		}
 		if pactValP != expVal {
 			t.Errorf("#%d «%s»: compact (JSONP) got valid? %v, truth? %v", i, test, pactValP, expVal)
 		}
+		if pactValP != pactValPStr {
+			t.Errorf("#%d «%s»: compact (JSONP) got valid? %v, valid as string? %v", i, test, pactValP, pactValPStr)
+		}
+
 		if !expVal {
 			continue
 		}
@@ -133,6 +161,9 @@ func TestMost(t *testing.T) {
 		if !bytes.Equal(pactP, expPactP) {
 			t.Errorf("#%d «%s»: compact (JSONP) got «%s», exp «%s»", i, test, pactP, expPactP)
 		}
+		if !bytes.Equal(pactPStr, expPactP) {
+			t.Errorf("#%d «%s»: compact string (JSONP) got «%s», exp «%s»", i, test, pactPStr, expPactP)
+		}
 
 		// We do not validate compacting e280a{8,9} here. We have a
 		// dedicated test for that and json.Compact does not support
@@ -143,6 +174,9 @@ func TestMost(t *testing.T) {
 
 		if !bytes.Equal(pact, expPactP) {
 			t.Errorf("#%d «%s»: compact got «%s», exp «%s»", i, test, pact, expPactP)
+		}
+		if !bytes.Equal(pactStr, expPactP) {
+			t.Errorf("#%d «%s»: compact string got «%s», exp «%s»", i, test, pactStr, expPactP)
 		}
 	}
 }
