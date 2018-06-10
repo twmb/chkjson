@@ -37,6 +37,15 @@ type parseStateStack struct {
 	ext  []parseState
 }
 
+func (p *parseStateStack) push(s parseState) {
+	if p.end < 32 { // push
+		p.base[p.end] = s
+		p.end++
+	} else {
+		p.ext = append(p.ext, s)
+	}
+}
+
 func (p *parseStateStack) pop() parseState { // faster to not inline in endVal
 	l := len(p.ext)
 	if l == 0 {
@@ -89,7 +98,9 @@ func Valid(b []byte) bool {
 	var c byte
 	for p.at < len(p.in) {
 		c = p.in[p.at]
-		if !isSpace(c) {
+		switch c {
+		case ' ', '\r', '\n', '\t':
+		default:
 			goto start
 		}
 		p.at++
@@ -97,33 +108,21 @@ func Valid(b []byte) bool {
 	return false
 
 start:
-	for p.at < len(p.in) { // afterSpace
-		c = p.in[p.at]
-		p.at++
-		if !isSpace(c) {
-			goto beginVal
-		}
+	if p.at >= len(p.in) { // afterSpace
+		return p.stack.empty()
 	}
-	return p.stack.empty()
+	c = p.in[p.at]
+	p.at++
 
-beginVal:
 	switch c {
+	case ' ', '\t', '\n', '\r':
+		goto start
 	case '{':
-		if p.stack.end < 32 { // push
-			p.stack.base[p.stack.end] = parseObjKey
-			p.stack.end++
-		} else {
-			p.stack.ext = append(p.stack.ext, parseObjKey)
-		}
+		p.stack.push(parseObjKey)
 		goto beginStrOrEmpty
 
 	case '[':
-		if p.stack.end < 32 { // push
-			p.stack.base[p.stack.end] = parseArrVal
-			p.stack.end++
-		} else {
-			p.stack.ext = append(p.stack.ext, parseArrVal)
-		}
+		p.stack.push(parseArrVal)
 		goto beginValOrEmpty
 
 	case '"':
@@ -150,37 +149,33 @@ beginVal:
 	return false
 
 beginStrOrEmpty:
-	for p.at < len(p.in) { // afterSpace
+	for p.at < len(p.in) {
 		c = p.in[p.at]
 		p.at++
-		if !isSpace(c) {
-			break
+		switch c {
+		case ' ', '\r', '\t', '\n':
+		case '}':
+			p.stack.pop()
+			goto endVal
+		case '"':
+			goto finStr
+		default:
+			return false
 		}
-	}
-	if c == '}' {
-		l := len(p.stack.ext)
-		if l == 0 {
-			p.stack.end--
-		} else {
-			p.stack.ext = p.stack.ext[:l-1]
-		}
-		goto endVal
-	}
-	if c == '"' {
-		goto finStr
 	}
 	return false
 
 beginValOrEmpty:
 	for p.at < len(p.in) {
 		c = p.in[p.at]
-		if !isSpace(c) {
-			if c == ']' {
-				goto endVal
-			}
+		switch c {
+		case ' ', '\r', '\t', '\n':
+			p.at++
+		case ']':
+			goto endVal
+		default:
 			goto start
 		}
-		p.at++
 	}
 	return false
 
@@ -337,7 +332,9 @@ endVal: // most things parsed fall into endVal
 		for p.at < len(p.in) { // afterSpace
 			c = p.in[p.at]
 			p.at++
-			if !isSpace(c) {
+			switch c {
+			case ' ', '\r', '\t', '\n':
+			default:
 				return false
 			}
 		}
@@ -347,7 +344,9 @@ endVal: // most things parsed fall into endVal
 	for p.at < len(p.in) { // if parseState is not empty, we need another character
 		c = p.in[p.at]
 		p.at++
-		if !isSpace(c) {
+		switch c {
+		case ' ', '\r', '\n', '\t':
+		default:
 			goto finVal
 		}
 	}
@@ -357,34 +356,24 @@ finVal:
 	switch p.stack.pop() {
 	case parseObjKey:
 		if c == ':' {
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseObjVal
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseObjVal)
-			}
+			p.stack.push(parseObjVal)
 			goto start
 		}
 
 	case parseObjVal:
 		switch c {
 		case ',':
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseObjKey
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseObjKey)
-			}
+			p.stack.push(parseObjKey)
 			for p.at < len(p.in) { // afterSpace
 				c = p.in[p.at]
 				p.at++
-				if isSpace(c) {
-					continue
-				}
-				if c == '"' {
+				switch c {
+				case ' ', '\t', '\r', '\n':
+				case '"':
 					goto finStr
+				default:
+					return false
 				}
-				return false
 			}
 		case '}':
 			goto endVal
@@ -393,12 +382,7 @@ finVal:
 	case parseArrVal:
 		switch c {
 		case ',':
-			if p.stack.end < 32 { // push
-				p.stack.base[p.stack.end] = parseArrVal
-				p.stack.end++
-			} else {
-				p.stack.ext = append(p.stack.ext, parseArrVal)
-			}
+			p.stack.push(parseArrVal)
 			goto start
 		case ']':
 			goto endVal
@@ -406,10 +390,6 @@ finVal:
 	}
 
 	return false
-}
-
-func isSpace(c byte) bool {
-	return c <= ' ' && (c == ' ' || c == '\t' || c == '\r' || c == '\n')
 }
 
 func isHex(c byte) bool {
