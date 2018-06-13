@@ -45,7 +45,8 @@ func AppendCompactString(dst []byte, src string) ([]byte, bool) {
 // AppendCompact for more details.
 //
 // It is still valid to pass (src[:0], src) to this function even though the
-// six escaped characters are longer than the original unescaped three. If the
+// six escaped characters replacing line-separator and paragraph-separator
+// (each three bytes) are longer than the original unescaped three. If the
 // encoding cannot fit three new characters into itself without overwriting its
 // src position, it will reallocate a new slice and eventually return that.
 //

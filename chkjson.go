@@ -1,21 +1,22 @@
-// Package chkjson checks whether data is valid JSON and compacts it
-// (optionally in-place) without allocating.
+// Package chkjson provides the fastest JSON validating and compacting
+// functions that exist for Go.
 //
 // The standard library allocates when validating JSON and allocates more if
-// the JSON is very nested. This library only allocates if the JSON is more
-// than 32 levels deep (objects and arrays). Other minor to major differences
-// allow this library's Valid to over 2x faster as encoding/json's.
+// the JSON is very nested. This library avoids allocating by using recursive
+// parsing, which only adds just over 2x memory overhead. Other minor to major
+// differences allow this library's Valid to over 2x faster as encoding/json's.
 //
 // The standard library ensures that compact JSON is JavaScript safe. This is
 // necessary if the JSON will ever end up in JSONP, but is not always
 // necessary. This library provides a faster AppendCompactJSONP function to
 // imitate the stdlib's Compact, and further provides AppendCompact for the
 // same speed with a no-allocation (no JSONP escaping) guarantee. This
-// library's AppendCompact is usually around 4x faster than encoding/json's
+// library's AppendCompact is usually around 3x-4x faster than encoding/json's
 // Compact.
 //
 // In essence, this library aims to provide faster and allocation free
-// alternatives to encoding/json for a few specific use cases.
+// alternatives to encoding/json for a few specific use cases. For use cases
+// and design considerations, visit this project's repo's README.
 package chkjson
 
 import (
@@ -36,7 +37,7 @@ import (
 // escape the scanner. Thus, it has to allocate.
 //
 // Prior iterations of this code used a stack based scanner similar to
-// encoding/json.  Recursion is faster and only ~2x more memory expensive.
+// encoding/json. Recursion is faster and only ~2x more memory expensive.
 //
 // We use a giant state-machine function and inline many functions for
 // significant performance gains.
