@@ -19,61 +19,8 @@
 package chkjson
 
 import (
-	"reflect"
 	"unsafe"
 )
-
-type parseState byte
-
-const (
-	parseObjKey parseState = iota
-	parseObjVal
-	parseArrVal
-)
-
-// parseStateStack contains the knowledge of how nested we are in { or [.
-//
-// We avoid allocations by providing a 32 byte default stack; most JSON (that I
-// at least deal with) is not so deep, which allows us to never allocate an
-// extension slice.
-type parseStateStack struct {
-	base [32]parseState
-	end  uint8
-	ext  []parseState
-}
-
-func (p *parseStateStack) push(s parseState) {
-	if p.end < 32 {
-		p.base[p.end] = s
-		p.end++
-		return
-	}
-	p.ext = append(p.ext, s)
-}
-
-func (p *parseStateStack) pop() parseState { // faster to not inline in endVal
-	l := len(p.ext)
-	if l == 0 {
-		r := p.base[p.end-1]
-		p.end--
-		return r
-	}
-
-	r := p.ext[l-1]
-	p.ext = p.ext[:l-1]
-	return r
-}
-
-func (p *parseStateStack) empty() bool {
-	return p.end == 0
-}
-
-type parser struct {
-	in []byte
-	at int
-
-	stack parseStateStack
-}
 
 // Valid validates JSON starting from the knowledge that some non-space
 // character exists in the parser.
@@ -88,352 +35,320 @@ type parser struct {
 // passing itself to the func, escape analysis cannot assume that no func will
 // escape the scanner. Thus, it has to allocate.
 //
-// Our scanner instead bottoms out evaluating an entire value at a time. This
-// avoids recursion because every value has a defined limited bottom, but also
-// allows us to avoid setting the next function to use for evaluating. Every
-// "next function" is the beginning of a value. Whenever we begin a value, we
-// know what the rest of it must parse as.
+// Prior iterations of this code used a stack based scanner similar to
+// encoding/json.  Recursion is faster and only ~2x more memory expensive.
 //
 // We use a giant state-machine function and inline many functions for
-// significant performance gain (on the order of 100% faster).
-
-// ValidString returns whether s is valid JSON.
-func ValidString(s string) bool {
-	var b []byte
-	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
-		Data: ((*reflect.StringHeader)(unsafe.Pointer(&s))).Data,
-		Len:  len(s),
-		Cap:  len(s),
-	}
-	return Valid(b)
-}
+// significant performance gains.
 
 // Valid returns whether b is valid JSON.
 func Valid(b []byte) bool {
-	p := parser{in: b}
-	var c byte
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		switch c {
-		case ' ', '\r', '\n', '\t':
+	return ValidString(*(*string)(unsafe.Pointer(&b)))
+}
+
+// ValidString returns whether s is valid JSON.
+func ValidString(s string) bool {
+	at, ok := any(s, 0)
+	if !ok {
+		return false
+	}
+
+	for ; at < len(s); at++ {
+		switch s[at] {
+		case '\t', '\n', '\r', ' ':
 		default:
-			goto start
+			return false
 		}
-		p.at++
 	}
-	return false
+	return true
+}
 
+func any(in string, at int) (int, bool) {
+	var c byte
+	var ok bool
 start:
-	if p.at >= len(p.in) {
-		return p.stack.empty()
+	if at == len(in) {
+		return at, false
 	}
-	c = p.in[p.at]
-	p.at++
 
-	switch c {
-	case ' ', '\t', '\n', '\r':
+	switch c, at = in[at], at+1; c {
+	case ' ', '\r', '\t', '\n':
 		goto start
 	case '{':
-		p.stack.push(parseObjKey)
-		goto beginStrOrEmpty
-
+		goto finObj
 	case '[':
-		p.stack.push(parseArrVal)
-		goto beginValOrEmpty
-
+		goto finArr
 	case '"':
 		goto finStr
-
+	case 't':
+		end := at + len("rue")
+		return end, end <= len(in) && in[at:end] == "rue"
+	case 'f':
+		end := at + len("alse")
+		return end, end <= len(in) && in[at:end] == "alse"
+	case 'n':
+		end := at + len("ull")
+		return end, end <= len(in) && in[at:end] == "ull"
 	case '-':
 		goto finNeg
-
 	case '0':
 		goto fin0
-
-	case 't':
-		goto finTrue
-
-	case 'f':
-		goto finFalse
-
-	case 'n':
-		goto finNull
-	}
-	if isNat(c) {
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		goto fin1
+	default:
+		return at, false
 	}
-	return false
-
-beginStrOrEmpty:
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		p.at++
-		switch c {
-		case ' ', '\r', '\t', '\n':
-		case '}':
-			p.stack.pop()
-			goto endVal
-		case '"':
-			goto finStr
-		default:
-			return false
-		}
-	}
-	return false
-
-beginValOrEmpty:
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		switch c {
-		case ' ', '\r', '\t', '\n':
-			p.at++
-		case ']':
-			goto endVal
-		default:
-			goto start
-		}
-	}
-	return false
 
 finStr:
-	if p.at >= len(p.in) {
-		return false
-	}
-	c = p.in[p.at]
-	p.at++
-	if c == '"' {
-		goto endVal
-	}
-	if c == '\\' { // finStrEsc
-		if p.at >= len(p.in) {
-			return false
-		}
-		c = p.in[p.at]
-		p.at++
-		switch c {
-		case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
-			goto finStr
-		case 'u':
-			if p.at+3 < len(p.in) &&
-				isHex(p.in[p.at]) &&
-				isHex(p.in[p.at+1]) &&
-				isHex(p.in[p.at+2]) &&
-				isHex(p.in[p.at+3]) {
-				p.at += 4
-				goto finStr
+	for ; at < len(in); at++ {
+		switch in[at] {
+		default:
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+			20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+			30, 31:
+			return at, false
+		case '"':
+			return at + 1, true
+		case '\\':
+			at++
+			if at == len(in) {
+				return at, false
+			}
+			switch in[at] {
+			case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
+			case 'u':
+				if len(in[at:]) > 5 &&
+					isHex(in[at+1]) &&
+					isHex(in[at+2]) &&
+					isHex(in[at+3]) &&
+					isHex(in[at+4]) {
+					at += 5
+					goto finStr
+				}
+				return at, false
+			default:
+				return at, false
 			}
 		}
-		return false
 	}
-	if c < 0x20 {
-		return false
+	return at, false
+
+finObj:
+	for at < len(in) { // finish obj immediately or begin a key
+		switch c, at = in[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case '"':
+			goto finObjKey
+		case '}':
+			return at, true
+		default:
+			return at, false
+		}
 	}
-	goto finStr
+
+finObjKey: // we duplicate the above finStr for better jumps
+	for ; at < len(in); at++ {
+		switch in[at] {
+		default:
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+			20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+			30, 31:
+			return at, false
+		case '"':
+			at++
+			goto finObjSep
+		case '\\':
+			at++
+			if at == len(in) {
+				return at, false
+			}
+			switch in[at] {
+			case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
+			case 'u':
+				if len(in[at:]) > 5 &&
+					isHex(in[at+1]) &&
+					isHex(in[at+2]) &&
+					isHex(in[at+3]) &&
+					isHex(in[at+4]) {
+					at += 5
+					goto finObjKey
+				}
+				return at, false
+			default:
+				return at, false
+			}
+		}
+	}
+	return at, false
+
+finObjSep:
+	for at < len(in) { // found key, look for colon
+		switch c, at = in[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ':':
+			goto objAny
+		default:
+			return at, false
+		}
+	}
+
+objAny:
+	if at, ok = any(in, at); !ok { // found colon, finish anything
+		return at, false
+	}
+
+	for at < len(in) { // either end obj or require another key with comma
+		switch c, at = in[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ',':
+			goto beginStr
+		case '}': // ended obj
+			return at, true
+		default:
+			return at, false
+		}
+	}
+
+beginStr:
+	for at < len(in) { // found comma, look for key beginning
+		switch c, at = in[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case '"': // began str
+			goto finObjKey
+		default:
+			return at, false
+		}
+	}
+	return at, false
+
+finArr:
+	for at < len(in) { // finish arr immediately or begin anything
+		switch c = in[at]; c {
+		case ' ', '\r', '\t', '\n':
+			at++
+		case ']':
+			return at + 1, true
+		default:
+			goto arrAny
+		}
+	}
+
+arrAny:
+	if at, ok = any(in, at); !ok {
+		return at, false
+	}
+
+	for at < len(in) { // either see a comma and require another anything, or finish
+		switch c, at = in[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ',':
+			goto arrAny
+		case ']':
+			return at, true
+		default:
+			return at, false
+		}
+	}
+
+	return at, false
 
 finNeg:
-	if p.at >= len(p.in) {
-		return false
+	if at == len(in) {
+		return at, false
 	}
-	c = p.in[p.at]
-	p.at++
-	if c == '0' {
+	if c, at = in[at], at+1; c == '0' {
 		goto fin0
 	}
-	if isNat(c) {
-		goto fin1
+	if !isNat(c) {
+		return at, false
 	}
-	return false
 
 fin1:
-	for p.at < len(p.in) {
-		if !isNum(p.in[p.at]) {
-			goto fin0
-		}
-		p.at++
+	for ; at < len(in) && isNum(in[at]); at++ {
 	}
-	goto endVal
 
 fin0:
-	if p.at >= len(p.in) {
-		goto endVal
+	if at == len(in) {
+		return at, true
 	}
-	c = p.in[p.at]
-	if c == '.' {
-		p.at++
-		goto finDot
-	}
+	c = in[at]
 	if isE(c) {
-		p.at++
+		at++
 		goto finE
 	}
-	goto endVal
-
-finDot:
-	if p.at >= len(p.in) {
-		return false
+	if c != '.' {
+		return at, true
 	}
-	c = p.in[p.at]
-	p.at++
-	if !isNum(c) { // first char after dot must be num
-		return false
-	}
+	at++
 
-	for p.at < len(p.in) && isNum(p.in[p.at]) { // consume all nums
-		p.at++
+	// finDot
+	if at == len(in) {
+		return at, false
+	}
+	if c, at = in[at], at+1; !isNum(c) { // first char after dot must be num
+		return at, false
 	}
 
-	if p.at < len(p.in) && isE(p.in[p.at]) {
-		p.at++
-		goto finE
+	for ; at < len(in) && isNum(in[at]); at++ {
 	}
-	goto endVal
+
+	if at == len(in) || !isE(in[at]) {
+		return at, true
+	}
+	at++
 
 finE:
-	if p.at >= len(p.in) {
-		return false
+	if at == len(in) {
+		return at, false
 	}
-	c = p.in[p.at]
-	p.at++
-	if c == '+' || c == '-' {
-		if p.at >= len(p.in) {
-			return false
+	if c, at = in[at], at+1; c == '+' || c == '-' {
+		if at == len(in) {
+			return at, false
 		}
-		c = p.in[p.at]
-		p.at++
+		c, at = in[at], at+1
 	}
 	if !isNum(c) { // first after e (and +/-) must be num
-		return false
+		return at, false
 	}
-	for p.at < len(p.in) && isNum(p.in[p.at]) { // consume all nums
-		p.at++
+	for ; at < len(in) && isNum(in[at]); at++ {
 	}
-	goto endVal
-
-finTrue:
-	if p.at+2 < len(p.in) &&
-		p.in[p.at] == 'r' &&
-		p.in[p.at+1] == 'u' &&
-		p.in[p.at+2] == 'e' {
-
-		p.at += 3
-		goto endVal
-	}
-	return false
-
-finFalse:
-	if p.at+3 < len(p.in) &&
-		p.in[p.at] == 'a' &&
-		p.in[p.at+1] == 'l' &&
-		p.in[p.at+2] == 's' &&
-		p.in[p.at+3] == 'e' {
-
-		p.at += 4
-		goto endVal
-	}
-	return false
-
-finNull:
-	if p.at+2 < len(p.in) &&
-		p.in[p.at] == 'u' &&
-		p.in[p.at+1] == 'l' &&
-		p.in[p.at+2] == 'l' {
-
-		p.at += 3
-		goto endVal
-	}
-	return false
-
-endVal:
-	nop() // allow a preemption before ending a value
-
-	if p.stack.empty() {
-		for p.at < len(p.in) { // afterSpace
-			c = p.in[p.at]
-			p.at++
-			switch c {
-			case ' ', '\r', '\t', '\n':
-			default:
-				return false
-			}
-		}
-		return true // the rest are space if we have nothing after spaces
-	}
-
-	for p.at < len(p.in) { // if parseState is not empty, we need another character
-		c = p.in[p.at]
-		p.at++
-		switch c {
-		case ' ', '\r', '\n', '\t':
-		default:
-			goto finVal
-		}
-	}
-	return false
-
-finVal:
-	switch p.stack.pop() {
-	case parseObjKey:
-		if c == ':' {
-			p.stack.push(parseObjVal)
-			goto start
-		}
-
-	case parseObjVal:
-		switch c {
-		case ',':
-			p.stack.push(parseObjKey)
-			for p.at < len(p.in) { // afterSpace
-				c = p.in[p.at]
-				p.at++
-				switch c {
-				case ' ', '\t', '\r', '\n':
-				case '"':
-					goto finStr
-				default:
-					return false
-				}
-			}
-		case '}':
-			goto endVal
-		}
-
-	case parseArrVal:
-		switch c {
-		case ',':
-			p.stack.push(parseArrVal)
-			goto start
-		case ']':
-			goto endVal
-		}
-	}
-
-	return false
+	return at, true
 }
 
 func isHex(c byte) bool {
-	return isNum(c) || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+	// This switch compiles best. We can recreate it with comparisons directly
+	// but we would have to know the proper order.
+	switch c {
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+		'a', 'b', 'c', 'd', 'e', 'f',
+		'A', 'B', 'C', 'D', 'E', 'F':
+		return true
+	default:
+		return false
+	}
 }
 
 func isNum(c byte) bool {
-	return '0' <= c && c <= '9'
+	// With good branch prediction, this in switch form is one cycle
+	// faster. In the normal case, we'll have a run of numbers until we
+	// don't.
+	switch c {
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return true
+	}
+	return false
 }
 
 func isNat(c byte) bool {
-	return '1' <= c && c <= '9'
+	switch c {
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return true
+	}
+	return false
 }
 
 func isE(c byte) bool {
 	return c == 'e' || c == 'E'
 }
-
-// With our large state machine having nearly no function calls, we have no
-// preemption point for garbage collection. We need to allow some. The
-// following two changed nop's seem to work wonders in local testing of
-// creating a ton of garbage and timing GC's while calling valid. Without the
-// nop above (and the nested nop2), the GC's in testing are 50x slower.
-
-//go:noinline
-func nop2() {}
-
-//go:noinline
-func nop() { nop2() }
