@@ -28,6 +28,7 @@ func TestMost(t *testing.T) {
 		`"foo"`,
 		"\"\xe2\x80\xa8\xe2\x80\xa9\"", // line-sep and paragraph-sep
 		` "\uaaaa" `,
+		` "\uaaaa\uaaaa" `,
 		` "\`,
 		` "\z`,
 		" \"f\x00o\"",
@@ -67,7 +68,10 @@ func TestMost(t *testing.T) {
 		`{"foo": [{"":3, "4": "3"}, 4, {}], "t_wo": 1}`,
 		` {"foo": 2,"fudge}`,
 		`{{"foo": }}`,
+		`{"foo": true, f "a": true}`,
 		`{{"foo": [{"":3, 4: "3"}, 4, "5": {4}]}, "t_wo": 1}`,
+		`{"\uaaaa\uaaaa" : true}`,
+		"{\"\xe2\x80\xa8\xe2\x80\xa9\": true}", // line-sep and paragraph-sep
 		"{",
 		`{"foo"`,
 		`{"foo",f}`,
@@ -83,6 +87,7 @@ func TestMost(t *testing.T) {
 		`[`,
 		`[1,`,
 		`[1a`,
+		`[1a]`,
 		`[]]`,
 
 		// boolean
