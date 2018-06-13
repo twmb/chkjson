@@ -1,40 +1,43 @@
 package chkjson
 
 import (
-	"reflect"
 	"unsafe"
 )
 
 // AppendCompact appends the compact form of src to dst if src is entirely
 // JSON, returning the updated dst and whether all of src was valid.
 //
-// This function assumes and returns ownership of dst. If the src contains
-// invalid JSON, dst may have an invalid byte.
+// This function assumes and returns ownership of dst. If src is invalid, this
+// will return nil.
 //
 // It is valid to pass (src[:0], src) to this function; src will be overwritten
-// with any valid JSON. If src is invalid, the returned slice may have an
-// invalid byte. This function is guaranteed not to add bytes to the input
-// JSON, meaning this function will not reallocate the input slice if it is
-// used as both src and dst.
+// with any valid JSON. This function is guaranteed not to add bytes to the
+// input JSON, meaning this function will not reallocate the input slice if it
+// is used as both src and dst.
 //
 // This function does not escape line-separator or paragraph-separator
 // characters, which can be problematic for JSONP. If conversion is necessary,
 // use AppendCompactJSONP.
 func AppendCompact(dst, src []byte) ([]byte, bool) {
-	p := compactor{parser: parser{in: src}, dst: dst}
-	return p.dst, p.compact()
+	return AppendCompactString(dst, *(*string)(unsafe.Pointer(&src)))
 }
 
 // AppendCompactString is exactly like AppendCompact but for compacting
 // strings.
 func AppendCompactString(dst []byte, src string) ([]byte, bool) {
-	var b []byte
-	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
-		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
-		Len:  len(src),
-		Cap:  len(src),
+	dst, at, ok := packAny(dst, src, 0, false)
+	if !ok {
+		return nil, false
 	}
-	return AppendCompact(dst, b)
+
+	for ; at < len(src); at++ {
+		switch src[at] {
+		case '\t', '\n', '\r', ' ':
+		default:
+			return nil, false
+		}
+	}
+	return dst, true
 }
 
 // AppendCompactJSONP is similar to AppendCompact, but this function escapes
@@ -47,427 +50,371 @@ func AppendCompactString(dst []byte, src string) ([]byte, bool) {
 // src position, it will reallocate a new slice and eventually return that.
 //
 // This function returns the new or the updated slice and whether the input
-// source was valid JSON.
+// source was valid JSON. If validation fails, this returns nil.
 func AppendCompactJSONP(dst, src []byte) ([]byte, bool) {
-	p := compactor{parser: parser{in: src}, jsonp: true, dst: dst}
-	return p.dst, p.compact()
+	return AppendCompactJSONPString(dst, *(*string)(unsafe.Pointer(&src)))
 }
 
 // AppendCompactJSONPString is exactly like AppendCompactJSONP but for
 // compacting strings.
 func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
-	var b []byte
-	*(*reflect.SliceHeader)(unsafe.Pointer(&b)) = reflect.SliceHeader{
-		Data: ((*reflect.StringHeader)(unsafe.Pointer(&src))).Data,
-		Len:  len(src),
-		Cap:  len(src),
+	dst, at, ok := packAny(dst, src, 0, true)
+	if !ok {
+		return nil, false
 	}
-	return AppendCompactJSONP(dst, b)
-}
 
-// compactor appends to dst as we parse non-space bytes. Most of the parsing
-// code is copied verbatim.
-//
-// The general pattern here is to keep a byte in dst whenever it is
-// non-whitespace while parsing.
-//
-// While it is tedious to have this code copied, it allows us great perf.
-type compactor struct {
-	parser
-
-	jsonp bool
-
-	dst []byte
-}
-
-func (p *compactor) compact() bool {
-	var c byte
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		switch c {
-		case ' ', '\r', '\n', '\t':
+	for ; at < len(src); at++ {
+		switch src[at] {
+		case '\t', '\n', '\r', ' ':
 		default:
-			goto start
+			return nil, false
 		}
-		p.at++
 	}
-	return false
+	return dst, true
+}
 
-start:
-	if p.at >= len(p.in) { // afterSpace
-		return p.stack.empty()
+// As in chkjson.go, this function is super ugly. It is mostly a copy of
+// chkjson's any but we keep bytes as appropriate.
+//
+// Where possible, we append spans of memory at a time (via start and at).
+// jsonp makes string parsing quite ugly.
+func packAny(dst []byte, src string, at int, jsonp bool) ([]byte, int, bool) {
+	var c byte
+	var ok bool
+	var start int
+
+whitespace:
+	if at == len(src) {
+		return nil, 0, false
 	}
-	c = p.in[p.at]
-	p.at++
 
-	if c <= ' ' {
-		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
-			goto start
-		}
-		return false
-	}
-	p.dst = append(p.dst, c)
-
-	switch c {
+	switch c, start, at = src[at], at, at+1; c {
+	case ' ', '\r', '\t', '\n':
+		goto whitespace
 	case '{':
-		p.stack.push(parseObjKey)
-		goto beginStrOrEmpty
-
+		dst = append(dst, '{')
+		goto finObj
 	case '[':
-		p.stack.push(parseArrVal)
-		goto beginValOrEmpty
-
+		dst = append(dst, '[')
+		goto finArr
 	case '"':
 		goto finStr
-
+	case 't':
+		end := at + len("rue")
+		if end <= len(src) && src[at:end] == "rue" {
+			dst = append(dst, 't', 'r', 'u', 'e')
+			return dst, end, true
+		}
+		return nil, 0, false
+	case 'f':
+		end := at + len("alse")
+		if end <= len(src) && src[at:end] == "alse" {
+			dst = append(dst, 'f', 'a', 'l', 's', 'e')
+			return dst, end, true
+		}
+		return nil, 0, false
+	case 'n':
+		end := at + len("ull")
+		if end <= len(src) && src[at:end] == "ull" {
+			dst = append(dst, 'n', 'u', 'l', 'l')
+			return dst, end, true
+		}
+		return nil, 0, false
 	case '-':
 		goto finNeg
-
 	case '0':
 		goto fin0
-
-	case 't':
-		goto finTrue
-
-	case 'f':
-		goto finFalse
-
-	case 'n':
-		goto finNull
-	}
-	if isNat(c) {
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		goto fin1
+	default:
+		return nil, 0, false
 	}
-	return false
-
-beginStrOrEmpty:
-	for p.at < len(p.in) { // afterSpace
-		c = p.in[p.at]
-		p.at++
-		switch c {
-		case ' ', '\r', '\t', '\n':
-		case '}':
-			p.dst = append(p.dst, c)
-			p.stack.pop()
-			goto endVal
-		case '"':
-			p.dst = append(p.dst, c)
-			goto finStr
-		default:
-			return false
-		}
-	}
-	return false
-
-beginValOrEmpty:
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		switch c {
-		case ' ', '\r', '\t', '\n':
-			p.at++
-		case ']':
-			goto endVal
-		default:
-			goto start
-		}
-	}
-	return false
 
 finStr:
-	if p.at >= len(p.in) {
-		return false
-	}
-	c = p.in[p.at]
-	p.at++
-	if c == '"' {
-		p.dst = append(p.dst, c)
-		goto endVal
-	}
-	if c == '\\' {
-		p.dst = append(p.dst, c)
-
-		if p.at >= len(p.in) {
-			return false
+	for ; at < len(src); at++ {
+		if jsonp {
 		}
-		c = p.in[p.at]
-		p.at++
-		p.dst = append(p.dst, c) // pre-add the escaped byte
-
-		switch c {
-		case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
-			goto finStr
-		case 'u':
-			if p.at+3 < len(p.in) {
-				c1 := p.in[p.at]
-				c2 := p.in[p.at+1]
-				c3 := p.in[p.at+2]
-				c4 := p.in[p.at+3]
-				if isHex(c1) && isHex(c2) && isHex(c3) && isHex(c4) {
-					p.dst = append(p.dst, c1, c2, c3, c4)
-					p.at += 4
+		switch src[at] {
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+			20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+			30, 31:
+			return nil, 0, false
+		case '"':
+			at++
+			dst = append(dst, src[start:at]...)
+			return dst, at, true
+		case '\\':
+			at++
+			if at == len(src) {
+				return nil, 0, false
+			}
+			switch src[at] {
+			case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
+			case 'u':
+				if len(src[at:]) > 5 &&
+					isHex(src[at+1]) &&
+					isHex(src[at+2]) &&
+					isHex(src[at+3]) &&
+					isHex(src[at+4]) {
+					at += 5
 					goto finStr
 				}
+				return nil, 0, false
+			default:
+				return nil, 0, false
+			}
+		default:
+			if !jsonp || src[at] != 0xe2 || at+2 >= len(src) {
+				continue
+			}
+
+			// encoding/json's Compact changes 0xe280a{8,9} to
+			// `\u2028` or `\u2029`, turning 3 bytes into 6. We
+			// allow using src[:0] as dst, so we must not clobber
+			// what we have yet to read.
+			if n1, n2 := src[at+1], src[at+2]; n1 == 0x80 && n2&^1 == 0xa8 {
+				dst, start = append(dst, src[start:at]...), at
+
+				overlapMin := len(dst) + 3
+				if overlapMin <= cap(dst) {
+					overlapTest := dst[len(dst):overlapMin]
+					for i := 0; i < len(overlapTest); i++ {
+						overlapTest[i] = 0
+						if src[at] == 0 { // we just modified src by changing dst; these regions overlap
+							new := make([]byte, len(dst), cap(dst))
+							copy(new, dst)
+							dst = new
+							break
+						}
+					}
+				}
+
+				dst = append(dst, '\\', 'u', '2', '0', '2', '8'|n2&1)
+				start += 3
+				at += 3 // 0xe2, 0x80, 0xa{8,9}
+
+				goto finStr
 			}
 		}
-		return false
-
 	}
-	if c < 0x20 {
-		return false
-	}
-	if !p.jsonp || c != 0xe2 {
-		p.dst = append(p.dst, c)
-		goto finStr
-	}
+	return nil, 0, false
 
-	// encoding/json's Compact changes U+2028 and U+2029 (0xe280a8 and
-	// 0xe280a9) to "\u2028" and "\u2029".
-	//
-	// If you notice, that turns 3 characters into 6. We provide the option
-	// to use src[:0] as dst, but encoding this blindly would clobber what
-	// we have yet to read.
-	//
-	// If this is e280a{8,9}, we set dst to be a new slice unless we have
-	// three spare bytes saved from compacting.
-	if p.at+1 >= len(p.in) {
-		p.dst = append(p.dst, c)
-		goto finStr
-	}
-
-	if n1, n2 := p.in[p.at], p.in[p.at+1]; n1 != 0x80 || n2&^1 != 0xa8 {
-		p.dst = append(p.dst, c)
-		goto finStr
-	} else {
-		// dstPtr, at most, can be just before srcPtr. We have not
-		// appended the new character yet.
-		//
-		// We need to reallocate if our three new characters will put
-		// us on or after srcPtr.
-		//
-		// This conditional is very ugly to avoid declaration problems
-		// with goto.
-		if srcPtr, dstPtr :=
-			uintptr(unsafe.Pointer(&p.in[p.at-1])), // sub one to get where we _were_
-			uintptr(unsafe.Pointer(&p.dst[len(p.dst)-1])); dstPtr < srcPtr && dstPtr+3 >= srcPtr {
-
-			new := make([]byte, len(p.dst), cap(p.in))
-			copy(new, p.dst)
-			p.dst = new
+finObj:
+	for at < len(src) { // finish obj immediately or begin a key
+		switch c, start, at = src[at], at, at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case '"':
+			goto finObjKey
+		case '}':
+			dst = append(dst, '}')
+			return dst, at, true
+		default:
+			return dst, at, false
 		}
-
-		p.dst = append(p.dst, `\u202`...)
-		p.dst = append(p.dst, ('8' | n2&1))
-		p.at += 2
-
-		goto finStr
 	}
+
+finObjKey:
+	for ; at < len(src); at++ { // duplicated above for better jumps
+		switch src[at] {
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+			20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+			30, 31:
+			return nil, 0, false
+		case '"':
+			at++
+			dst = append(dst, src[start:at]...)
+			goto finObjSep
+		case '\\':
+			at++
+			if at == len(src) {
+				return nil, 0, false
+			}
+			switch src[at] {
+			case 'b', 'f', 'n', 'r', 't', '\\', '/', '"':
+			case 'u':
+				if len(src[at:]) > 5 &&
+					isHex(src[at+1]) &&
+					isHex(src[at+2]) &&
+					isHex(src[at+3]) &&
+					isHex(src[at+4]) {
+					at += 5
+					goto finObjKey
+				}
+				return nil, 0, false
+			default:
+				return nil, 0, false
+			}
+		default:
+			if !jsonp || src[at] != 0xe2 || at+2 >= len(src) {
+				continue
+			}
+			if n1, n2 := src[at+1], src[at+2]; n1 == 0x80 && n2&^1 == 0xa8 {
+				dst, start = append(dst, src[start:at]...), at
+				overlapMin := len(dst) + 3
+				if overlapMin <= cap(dst) {
+					overlapTest := dst[len(dst):overlapMin]
+					for i := 0; i < len(overlapTest); i++ {
+						overlapTest[i] = 0
+						if src[at] == 0 {
+							new := make([]byte, len(dst), cap(dst))
+							copy(new, dst)
+							dst = new
+							break
+						}
+					}
+				}
+				dst = append(dst, '\\', 'u', '2', '0', '2', '8'|n2&1)
+				start += 3
+				at += 3
+
+				goto finObjKey
+			}
+		}
+	}
+	return nil, 0, false
+
+finObjSep:
+	for at < len(src) {
+		switch c, at = src[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ':':
+			dst = append(dst, ':')
+			goto objAny
+		default:
+			return nil, 0, false
+		}
+	}
+
+objAny:
+	if dst, at, ok = packAny(dst, src, at, jsonp); !ok {
+		return nil, 0, false
+	}
+
+	for at < len(src) {
+		switch c, at = src[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ',':
+			dst = append(dst, ',')
+			goto beginStr
+		case '}':
+			dst = append(dst, '}')
+			return dst, at, true
+		default:
+			return nil, 0, false
+		}
+	}
+
+beginStr:
+	for at < len(src) {
+		switch c, start, at = src[at], at, at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case '"':
+			goto finObjKey
+		default:
+			return nil, 0, false
+		}
+	}
+	return nil, 0, false
+
+finArr:
+	for at < len(src) {
+		switch c = src[at]; c {
+		case ' ', '\r', '\t', '\n':
+			at++
+		case ']':
+			dst = append(dst, ']')
+			return dst, at + 1, true
+		default:
+			goto arrAny
+		}
+	}
+
+arrAny:
+	if dst, at, ok = packAny(dst, src, at, jsonp); !ok {
+		return nil, 0, false
+	}
+
+	for at < len(src) {
+		switch c, at = src[at], at+1; c {
+		case ' ', '\r', '\t', '\n':
+		case ',':
+			dst = append(dst, ',')
+			goto arrAny
+		case ']':
+			dst = append(dst, ']')
+			return dst, at, true
+		default:
+			return nil, 0, false
+		}
+	}
+
+	return nil, 0, false
 
 finNeg:
-	if p.at >= len(p.in) {
-		return false
+	if at == len(src) {
+		return nil, 0, false
 	}
-	c = p.in[p.at]
-	p.at++
-	p.dst = append(p.dst, c)
-	if c == '0' {
+	if c, at = src[at], at+1; c == '0' {
 		goto fin0
 	}
-	if isNat(c) {
-		goto fin1
+	if !isNat(c) {
+		return nil, 0, false
 	}
-	return false
 
 fin1:
-	for p.at < len(p.in) {
-		c = p.in[p.at]
-		if !isNum(c) {
-			goto fin0
-		}
-		p.dst = append(p.dst, c)
-		p.at++
+	for ; at < len(src) && isNum(src[at]); at++ {
 	}
-	goto endVal
 
 fin0:
-	if p.at >= len(p.in) {
-		goto endVal
+	if at == len(src) {
+		dst = append(dst, src[start:at]...)
+		return dst, at, true
 	}
-	c = p.in[p.at]
-	if c == '.' {
-		p.dst = append(p.dst, c)
-		p.at++
-		goto finDot
-	}
+	c = src[at]
 	if isE(c) {
-		p.dst = append(p.dst, c)
-		p.at++
+		at++
 		goto finE
 	}
-	goto endVal
-
-finDot:
-	if p.at >= len(p.in) {
-		return false
+	if c != '.' {
+		dst = append(dst, src[start:at]...)
+		return dst, at, true
 	}
-	c = p.in[p.at]
-	p.at++
-	if !isNum(c) { // first char after dot must be num
-		return false
-	}
-	p.dst = append(p.dst, c)
+	at++
 
-	for p.at < len(p.in) { // consume all nums
-		c := p.in[p.at]
-		if !isNum(c) {
-			break
-		}
-		p.dst = append(p.dst, c)
-		p.at++
+	// finDot
+	if at == len(src) {
+		return nil, 0, false
+	}
+	if c, at = src[at], at+1; !isNum(c) { // first char after dot must be num
+		return nil, 0, false
 	}
 
-	if p.at < len(p.in) {
-		c := p.in[p.at]
-		if isE(p.in[p.at]) {
-			p.dst = append(p.dst, c)
-			p.at++
-			goto finE
-		}
+	for ; at < len(src) && isNum(src[at]); at++ {
 	}
-	goto endVal
+
+	if at == len(src) || !isE(src[at]) {
+		dst = append(dst, src[start:at]...)
+		return dst, at, true
+	}
+	at++
 
 finE:
-	if p.at >= len(p.in) {
-		return false
+	if at == len(src) {
+		return nil, 0, false
 	}
-	c = p.in[p.at]
-	p.at++
-
-	if c == '+' || c == '-' {
-		p.dst = append(p.dst, c) // keep before overwriting c
-		if p.at >= len(p.in) {
-			return false
+	if c, at = src[at], at+1; c == '+' || c == '-' {
+		if at == len(src) {
+			return nil, 0, false
 		}
-		c = p.in[p.at]
-		p.at++
+		c, at = src[at], at+1
 	}
-
 	if !isNum(c) { // first after e (and +/-) must be num
-		return false
+		return nil, 0, false
 	}
-	p.dst = append(p.dst, c)
-
-	for p.at < len(p.in) { // consume all nums
-		c := p.in[p.at]
-		if !isNum(c) {
-			break
-		}
-		p.dst = append(p.dst, c)
-		p.at++
+	for ; at < len(src) && isNum(src[at]); at++ {
 	}
-	goto endVal
-
-finTrue:
-	if p.at+2 < len(p.in) &&
-		p.in[p.at] == 'r' &&
-		p.in[p.at+1] == 'u' &&
-		p.in[p.at+2] == 'e' {
-
-		p.at += 3
-		p.dst = append(p.dst, 'r', 'u', 'e')
-		goto endVal
-	}
-	return false
-
-finFalse:
-	if p.at+3 < len(p.in) &&
-		p.in[p.at] == 'a' &&
-		p.in[p.at+1] == 'l' &&
-		p.in[p.at+2] == 's' &&
-		p.in[p.at+3] == 'e' {
-
-		p.at += 4
-		p.dst = append(p.dst, 'a', 'l', 's', 'e')
-		goto endVal
-	}
-	return false
-
-finNull:
-	if p.at+2 < len(p.in) &&
-		p.in[p.at] == 'u' &&
-		p.in[p.at+1] == 'l' &&
-		p.in[p.at+2] == 'l' {
-
-		p.at += 3
-		p.dst = append(p.dst, 'u', 'l', 'l')
-		goto endVal
-	}
-	return false
-
-endVal:
-	nop() // allow preemption
-
-	if p.stack.empty() {
-		for p.at < len(p.in) {
-			c = p.in[p.at]
-			p.at++
-			switch c {
-			case ' ', '\r', '\t', '\n':
-			default:
-				return false
-			}
-		}
-		goto start
-	}
-
-	for p.at < len(p.in) { // if parseState is not empty, we need another character
-		c = p.in[p.at]
-		p.at++
-		switch c {
-		case ' ', '\r', '\n', '\t':
-		default:
-			p.dst = append(p.dst, c)
-			goto finVal
-		}
-	}
-	return false
-
-finVal:
-	switch p.stack.pop() {
-	case parseObjKey:
-		if c == ':' {
-			p.stack.push(parseObjVal)
-			goto start
-		}
-
-	case parseObjVal:
-		switch c {
-		case ',':
-			p.stack.push(parseObjKey)
-			for p.at < len(p.in) { // afterSpace
-				c = p.in[p.at]
-				p.at++
-				switch c {
-				case ' ', '\t', '\r', '\n':
-				case '"':
-					p.dst = append(p.dst, c)
-					goto finStr
-				default:
-					return false
-				}
-			}
-		case '}':
-			goto endVal
-		}
-
-	case parseArrVal:
-		switch c {
-		case ',':
-			p.stack.push(parseArrVal)
-			goto start
-		case ']':
-			goto endVal
-		}
-	}
-
-	return false
+	dst = append(dst, src[start:at]...)
+	return dst, at, true
 }
