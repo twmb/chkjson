@@ -28,7 +28,7 @@ func TestCompactSeparators(t *testing.T) {
 			}
 
 			if !bytes.Equal(gotOrig, []byte(test.in)) {
-				t.Errorf("AppendCompact: got %s != exp %s", gotOrig, test.in)
+				t.Errorf("AppendCompact: got %q != exp %q", gotOrig, test.in)
 			}
 
 			got, ok := AppendCompactJSONP(in[:0], in)
@@ -49,7 +49,7 @@ func TestCompactSeparators(t *testing.T) {
 			}
 
 			if !bytes.Equal(got, []byte(test.exp)) {
-				t.Errorf("got %s != exp %s", got, test.exp)
+				t.Errorf("got %q != exp %q", got, test.exp)
 			}
 		}
 	}
