@@ -22,7 +22,8 @@ func Fuzz(data []byte) int {
 		return 0
 	}
 
-	b := bytes.NewBuffer(make([]byte, 0, len(data)))
+	jb := make([]byte, 0, len(data))
+	b := bytes.NewBuffer(jb)
 	if err := json.Compact(b, data); err != nil {
 		panic(fmt.Sprintf("invalid stdlib: %v!", err))
 	}
@@ -46,6 +47,13 @@ func Fuzz(data []byte) int {
 
 	if !Valid(compact1) {
 		panic("compact without jsonp not valid!")
+	}
+
+	esc := Escape(jb[:0], data, EscapeHTML, EscapeJSONP)
+	canonEsc, _ := json.Marshal(string(data))
+	canonEsc = canonEsc[1 : len(canonEsc)-1]
+	if !bytes.Equal(esc, canonEsc) {
+		panic("escape html+jsonp != canonical marshal!")
 	}
 
 	return 1
