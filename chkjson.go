@@ -1,5 +1,5 @@
-// Package chkjson provides the fastest JSON validating and compacting
-// functions that exist for Go.
+// Package chkjson provides the fastest JSON validating, compacting, and
+// escaping functions that exist for Go.
 //
 // The standard library allocates when validating JSON and allocates more if
 // the JSON is very nested. This library avoids allocating by using recursive
