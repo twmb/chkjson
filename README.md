@@ -9,6 +9,8 @@ JSON and compacting it to a slice. A great appeal for this package is the
 in-place `AppendCompact` function and the potentially in-place
 `AppendConcatJSONP` function (and string variants).
 
+A minor appeal is the quick and easy string and slice escaping.
+
 ## Why would I need this?
 
 This package was designed for streaming untrusted JSON input to endpoints that
