@@ -86,6 +86,20 @@ func BenchmarkExtCompact(b *testing.B) {
 	}
 }
 
+func BenchmarkExtCompactInplace(b *testing.B) {
+	for fname, bs := range extFiles {
+		b.Run(fname, func(b *testing.B) {
+			buf, _ := AppendCompact(nil, bs)
+			b.ReportAllocs()
+			b.SetBytes(int64(len(bs)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				Compact(buf)
+			}
+		})
+	}
+}
+
 /* if you are curious for comparison, uncomment below.
 func BenchmarkExtValidStdlib(b *testing.B) {
 	for fname, bs := range extFiles {

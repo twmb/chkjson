@@ -25,7 +25,8 @@ If you are streaming _lots_ of JSON _all of the time_, the CPU and memory
 savings this package provides add up.
 
 This package outperforms any other JSON validating or compacting
-implementations. The code, while _supremely_ ugly, is written for the compiler.
+implementations. The code, while _supremely_ ugly and repetitive,
+is written for the compiler.
 The implementation was guided by profiling sections of code individually with
 various implementations.
 
@@ -43,6 +44,9 @@ recurses when necessary and this consumes only about 2.2x the memory a simple
 all cases, this extra memory consumption is not an issue, especially so since
 the CPU is freed up more for actual important work.
 
+The implementation is extremely repetitive and ugly, making it difficult to
+maintain. This tradeoff was made due to ideally not ever _needing_ changes.
+
 If you are only validating or compacting a few (countable) amount of times,
 this package is overkill.
 
@@ -54,6 +58,8 @@ Full documentation can be found on [`godoc`](https://godoc.org/github.com/twmb/c
 
 What follows is `benchstat` output for JSON files taken from [valyala/fastjson](https://github.com/valyala/fastjson)
 comparing stdlib against my code.
+
+Memory allocation savings are elided for brevity (normally 72 to 312 bytes).
 
 ```
 name                  old time/op    new time/op    delta
@@ -83,32 +89,24 @@ ExtValid/large-4       184MB/s ± 0%   590MB/s ± 0%  +220.77%  (p=0.000 n=9+10)
 ExtValid/medium-4      187MB/s ± 0%   618MB/s ± 0%  +230.03%  (p=0.000 n=10+10)
 ExtValid/small-4       175MB/s ± 0%   618MB/s ± 0%  +254.06%  (p=0.000 n=10+10)
 ExtValid/twitter-4     191MB/s ± 0%   593MB/s ± 0%  +210.19%  (p=0.000 n=10+9)
+```
 
-name                  old alloc/op   new alloc/op   delta
-ExtCompact/canada-4       184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtCompact/citm-4         184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtCompact/large-4        184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtCompact/medium-4       184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtCompact/small-4       72.0B ± 0%      0.0B       -100.00%  (p=0.000 n=10+10)
-ExtCompact/twitter-4      312B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/canada-4         184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/citm-4           184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/large-4          184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/medium-4         184B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/small-4         72.0B ± 0%      0.0B       -100.00%  (p=0.000 n=10+10)
-ExtValid/twitter-4        312B ± 0%        0B       -100.00%  (p=0.000 n=10+10)
+In place compacting directly using the `Compact` function is even faster.
 
-name                  old allocs/op  new allocs/op  delta
-ExtCompact/canada-4       5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtCompact/citm-4         5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtCompact/large-4        5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtCompact/medium-4       5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtCompact/small-4        2.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtCompact/twitter-4      6.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/canada-4         5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/citm-4           5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/large-4          5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/medium-4         5.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/small-4          2.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
-ExtValid/twitter-4        6.00 ± 0%      0.00       -100.00%  (p=0.000 n=10+10)
+```
+name                         old time/op    new time/op    delta
+ExtCompactInplace/canada-4     16.8ms ± 0%     3.5ms ± 1%    -78.88%  (p=0.000 n=8+10)
+ExtCompactInplace/citm-4       13.9ms ± 1%     0.9ms ± 1%    -93.36%  (p=0.000 n=10+10)
+ExtCompactInplace/large-4       235µs ± 1%      56µs ± 1%    -76.35%  (p=0.000 n=10+10)
+ExtCompactInplace/medium-4     21.1µs ± 1%     3.2µs ± 1%    -84.73%  (p=0.000 n=10+10)
+ExtCompactInplace/small-4      1.85µs ± 3%    0.28µs ± 2%    -84.83%  (p=0.000 n=10+10)
+ExtCompactInplace/twitter-4    5.35ms ± 0%    0.88ms ± 1%    -83.58%  (p=0.000 n=10+10)
+
+name                         old speed      new speed      delta
+ExtCompactInplace/canada-4    134MB/s ± 0%   636MB/s ± 1%   +373.47%  (p=0.000 n=8+10)
+ExtCompactInplace/citm-4      124MB/s ± 1%  1872MB/s ± 1%  +1406.08%  (p=0.000 n=10+10)
+ExtCompactInplace/large-4     120MB/s ± 1%   506MB/s ± 1%   +322.89%  (p=0.000 n=10+10)
+ExtCompactInplace/medium-4    110MB/s ± 1%   723MB/s ± 0%   +554.90%  (p=0.000 n=10+10)
+ExtCompactInplace/small-4     103MB/s ± 3%   677MB/s ± 2%   +558.42%  (p=0.000 n=10+10)
+ExtCompactInplace/twitter-4   118MB/s ± 0%   719MB/s ± 1%   +508.94%  (p=0.000 n=10+10)
 ```

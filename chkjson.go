@@ -14,6 +14,10 @@
 // library's AppendCompact is usually around 3x-4x faster than encoding/json's
 // Compact.
 //
+// For compacting JSON in place with no regard to JSONP, this library provides
+// a direct Compact function that is faster and more intuitive than using
+// AppendCompact to compact in place.
+//
 // In essence, this library aims to provide faster and allocation free
 // alternatives to encoding/json for a few specific use cases. For use cases
 // and design considerations, visit this project's repo's README.

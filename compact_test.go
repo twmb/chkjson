@@ -79,6 +79,16 @@ func TestCompact(t *testing.T) {
 			t.Error("AppendCompact changed contents of compact json")
 		}
 
+		// Ensure that Compact to itself changes nothing.
+		cpy := make([]byte, len(got))
+		copy(cpy, got)
+		cpy, ok := Compact(cpy)
+		if !ok {
+			t.Error("Compact of known good json is invalid")
+		} else if !bytes.Equal(cpy, got) {
+			t.Error("Compact of AppendCompact result != AppendCompact result")
+		}
+
 		// Indent that and ensure we end up back with our original.
 		indentBuf := new(bytes.Buffer)
 		json.Indent(indentBuf, buf, "", "  \t ")
@@ -109,4 +119,18 @@ func BenchmarkCompact(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		AppendCompact(a[:0], orig)
 	}
+}
+
+func BenchmarkCompactInplace(b *testing.B) {
+	orig := []byte(`{"foo":1,"bar":[{"fi\uabcdrst":1,"se\\cond":2,"last":9999},{}]}`)
+	b.Run("baseline", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			AppendCompact(orig[:0], orig)
+		}
+	})
+	b.Run("direct", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			Compact(orig)
+		}
+	})
 }

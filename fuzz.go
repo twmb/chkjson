@@ -16,8 +16,11 @@ func Fuzz(data []byte) int {
 	}
 
 	if got != true { // not valid
-		if _, compacted := AppendCompact(data[:0], data); compacted {
+		if _, compacted := AppendCompact(nil, data); compacted {
 			panic("compacted invalid json!")
+		}
+		if _, compact := Compact(append([]byte(nil), data...)); compact {
+			panic("inplace compacted invalid json!")
 		}
 		return 0
 	}
@@ -27,6 +30,8 @@ func Fuzz(data []byte) int {
 	if err := json.Compact(b, data); err != nil {
 		panic(fmt.Sprintf("invalid stdlib: %v!", err))
 	}
+
+	compactInplace, okInplace := Compact(append([]byte(nil), data...)) // before inplace JSONP compact
 	compact1, ok1 := AppendCompact(nil, data)
 	compact2, ok2 := AppendCompactJSONP(data[:0], data)
 
@@ -35,6 +40,13 @@ func Fuzz(data []byte) int {
 	}
 	if !ok2 {
 		panic("compact valid to self jsonp, not ok!")
+	}
+	if !okInplace {
+		panic("compact valid inplace, not ok!")
+	}
+
+	if !bytes.Equal(compact1, compactInplace) {
+		panic(fmt.Sprintf("not equal compact and compact inplace (1: %q, ip: %q!)", compact1, compactInplace))
 	}
 
 	if !bytes.Equal(b.Bytes(), compact2) {
