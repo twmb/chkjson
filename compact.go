@@ -80,29 +80,35 @@ func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
 // Where possible, we append spans of memory at a time (via start and at).
 // jsonp makes string parsing quite ugly.
 func packAny(dst []byte, src string, at int, jsonp bool) ([]byte, int, bool) {
+	start := at
 	var c byte
 	var ok bool
-	var start int
 
 whitespace:
 	if at == len(src) {
 		return nil, 0, false
 	}
 
-	switch c, start, at = src[at], at, at+1; c {
+	switch c, at = src[at], at+1; c {
 	case ' ', '\r', '\t', '\n':
+		start++
 		goto whitespace
 	case '{':
+		start++
 		dst = append(dst, '{')
 		goto finObj
 	case '[':
+		start++
 		dst = append(dst, '[')
 		goto finArr
 	case '"':
 		goto finStr
 	case 't':
 		end := at + len("rue")
-		if end <= len(src) && src[at:end] == "rue" {
+		if end <= len(src) &&
+			src[at] == 'r' &&
+			src[at+1] == 'u' &&
+			src[at+2] == 'e' {
 			dst = append(dst, 't', 'r', 'u', 'e')
 			return dst, end, true
 		}
@@ -116,7 +122,10 @@ whitespace:
 		return nil, 0, false
 	case 'n':
 		end := at + len("ull")
-		if end <= len(src) && src[at:end] == "ull" {
+		if end <= len(src) &&
+			src[at] == 'u' &&
+			src[at+1] == 'l' &&
+			src[at+2] == 'l' {
 			dst = append(dst, 'n', 'u', 'l', 'l')
 			return dst, end, true
 		}
@@ -133,8 +142,6 @@ whitespace:
 
 finStr:
 	for ; at < len(src); at++ {
-		if jsonp {
-		}
 		switch src[at] {
 		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
 			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
@@ -203,8 +210,9 @@ finStr:
 
 finObj:
 	for at < len(src) { // finish obj immediately or begin a key
-		switch c, start, at = src[at], at, at+1; c {
+		switch c, at = src[at], at+1; c {
 		case ' ', '\r', '\t', '\n':
+			start++
 		case '"':
 			goto finObjKey
 		case '}':
@@ -225,7 +233,7 @@ finObjKey:
 			return nil, 0, false
 		case '"':
 			at++
-			dst = append(dst, src[start:at]...)
+			dst, start = append(dst, src[start:at]...), at
 			goto finObjSep
 		case '\\':
 			at++
@@ -297,7 +305,7 @@ objAny:
 		switch c, at = src[at], at+1; c {
 		case ' ', '\r', '\t', '\n':
 		case ',':
-			dst = append(dst, ',')
+			dst, start = append(dst, ','), at-1
 			goto beginStr
 		case '}':
 			dst = append(dst, '}')
@@ -309,9 +317,10 @@ objAny:
 
 beginStr:
 	for at < len(src) {
-		switch c, start, at = src[at], at, at+1; c {
+		switch c, at = src[at], at+1; c {
 		case ' ', '\r', '\t', '\n':
 		case '"':
+			start = at - 1
 			goto finObjKey
 		default:
 			return nil, 0, false
