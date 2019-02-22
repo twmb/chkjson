@@ -18,6 +18,8 @@ import (
 // This function does not escape line-separator or paragraph-separator
 // characters, which can be problematic for JSONP. If conversion is necessary,
 // use AppendCompactJSONP.
+//
+// If simply compacting a slice in place, it is recommended to use Compact.
 func AppendCompact(dst, src []byte) ([]byte, bool) {
 	return AppendCompactString(dst, *(*string)(unsafe.Pointer(&src)))
 }
@@ -106,9 +108,9 @@ whitespace:
 	case 't':
 		end := at + len("rue")
 		if end <= len(src) &&
+			src[at+2] == 'e' &&
 			src[at] == 'r' &&
-			src[at+1] == 'u' &&
-			src[at+2] == 'e' {
+			src[at+1] == 'u' {
 			dst = append(dst, 't', 'r', 'u', 'e')
 			return dst, end, true
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,7 @@ func TestMost(t *testing.T) {
 
 		// array
 		`[]`,
+		`[ ]`,
 		`[ 1, {}]`,
 		strings.Repeat("[", 1000) + strings.Repeat("]", 1000),
 		`[1, 2, 3, 4, {}]`,
@@ -107,82 +109,92 @@ func TestMost(t *testing.T) {
 	}
 
 	for i, test := range tests {
-		// copy the original string to ensure it is not modified in our
-		// unsafe code.
-		origBytes := []byte(test)
-		orig := string(origBytes)
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			// copy the original string to ensure it is not modified in our
+			// unsafe code.
+			origBytes := []byte(test)
+			orig := string(origBytes)
 
-		in := []byte(test)
-		val := Valid(in)
-		strVal := ValidString(test)
-		expVal := json.Valid(in)
+			in := []byte(test)
+			val := Valid(in)
+			strVal := ValidString(test)
+			expVal := json.Valid(in)
 
-		if test != orig {
-			t.Errorf("#%d: ValidString modified the original string!", i)
-		}
-		if val != strVal {
-			t.Errorf("#%d «%s»: valid? %v, valid as string? %v", i, test, val, strVal)
-		}
-		if val != expVal {
-			t.Errorf("#%d «%s»: got valid? %v, truth? %v", i, test, val, expVal)
-		}
+			if test != orig {
+				t.Errorf("#%d: ValidString modified the original string!", i)
+			}
+			if val != strVal {
+				t.Errorf("«%s»: valid? %v, valid as string? %v", test, val, strVal)
+			}
+			if val != expVal {
+				t.Errorf("«%s»: got valid? %v, truth? %v", test, val, expVal)
+			}
 
-		pact, pactVal := AppendCompact(nil, in)
-		pactStr, pactValStr := AppendCompactString(nil, test)
+			pact, pactVal := AppendCompact(nil, in)
+			pactStr, pactValStr := AppendCompactString(nil, test)
 
-		if test != orig {
-			t.Errorf("#%d: AppendCompactString modified the original string!", i)
-		}
-		if pactVal != expVal {
-			t.Errorf("#%d «%s»: compact got valid? %v, truth? %v", i, test, pactVal, expVal)
-		}
-		if pactVal != pactValStr {
-			t.Errorf("#%d «%s»: compact got valid? %v, valid as string? %v", i, test, pactVal, pactValStr)
-		}
+			if test != orig {
+				t.Errorf("#%d: AppendCompactString modified the original string!", i)
+			}
+			if pactVal != expVal {
+				t.Errorf("«%s»: compact got valid? %v, truth? %v", test, pactVal, expVal)
+			}
+			if pactVal != pactValStr {
+				t.Errorf("«%s»: compact got valid? %v, valid as string? %v", test, pactVal, pactValStr)
+			}
 
-		pactP, pactValP := AppendCompactJSONP(nil, in)
-		pactPStr, pactValPStr := AppendCompactJSONPString(nil, test)
+			pactInplace, pactInplaceOk := Compact(append([]byte(nil), in...))
+			if pactInplaceOk != expVal {
+				t.Errorf("«%s»: compact inplace got valid? %v, truth? %v", test, pactInplaceOk, expVal)
+			}
+			if expVal && pactInplaceOk && !bytes.Equal(pactInplace, pact) {
+				t.Errorf("«%s»: compact inplace got «%s» != AppendCompact as inplace «%s»", test, pactInplace, pact)
+			}
 
-		if test != orig {
-			t.Error("AppendCompactJSONPString modified the original string!")
-		}
-		if pactValP != expVal {
-			t.Errorf("#%d «%s»: compact (JSONP) got valid? %v, truth? %v", i, test, pactValP, expVal)
-		}
-		if pactValP != pactValPStr {
-			t.Errorf("#%d «%s»: compact (JSONP) got valid? %v, valid as string? %v", i, test, pactValP, pactValPStr)
-		}
+			pactP, pactValP := AppendCompactJSONP(nil, in)
+			pactPStr, pactValPStr := AppendCompactJSONPString(nil, test)
 
-		if !expVal {
-			continue
-		}
+			if test != orig {
+				t.Error("AppendCompactJSONPString modified the original string!")
+			}
+			if pactValP != expVal {
+				t.Errorf("«%s»: compact (JSONP) got valid? %v, truth? %v", test, pactValP, expVal)
+			}
+			if pactValP != pactValPStr {
+				t.Errorf("«%s»: compact (JSONP) got valid? %v, valid as string? %v", test, pactValP, pactValPStr)
+			}
 
-		// If this is valid JSON, check that our compact calls compact
-		// appropriately.
-		buf := new(bytes.Buffer)
-		json.Compact(buf, in)
-		expPactP := buf.Bytes()
+			if !expVal {
+				return
+			}
 
-		if !bytes.Equal(pactP, expPactP) {
-			t.Errorf("#%d «%s»: compact (JSONP) got «%s», exp «%s»", i, test, pactP, expPactP)
-		}
-		if !bytes.Equal(pactPStr, expPactP) {
-			t.Errorf("#%d «%s»: compact string (JSONP) got «%s», exp «%s»", i, test, pactPStr, expPactP)
-		}
+			// If this is valid JSON, check that our compact calls compact
+			// appropriately.
+			buf := new(bytes.Buffer)
+			json.Compact(buf, in)
+			expPactP := buf.Bytes()
 
-		// We do not validate compacting e280a{8,9} here. We have a
-		// dedicated test for that and json.Compact does not support
-		// our non-JSONP behavior.
-		if bytes.Contains(in, []byte("\xe2\x80")) {
-			continue
-		}
+			if !bytes.Equal(pactP, expPactP) {
+				t.Errorf("«%s»: compact (JSONP) got «%s», exp «%s»", test, pactP, expPactP)
+			}
+			if !bytes.Equal(pactPStr, expPactP) {
+				t.Errorf("«%s»: compact string (JSONP) got «%s», exp «%s»", test, pactPStr, expPactP)
+			}
 
-		if !bytes.Equal(pact, expPactP) {
-			t.Errorf("#%d «%s»: compact got «%s», exp «%s»", i, test, pact, expPactP)
-		}
-		if !bytes.Equal(pactStr, expPactP) {
-			t.Errorf("#%d «%s»: compact string got «%s», exp «%s»", i, test, pactStr, expPactP)
-		}
+			// We do not validate compacting e280a{8,9} here. We have a
+			// dedicated test for that and json.Compact does not support
+			// our non-JSONP behavior.
+			if bytes.Contains(in, []byte("\xe2\x80")) {
+				return
+			}
+
+			if !bytes.Equal(pact, expPactP) {
+				t.Errorf("«%s»: compact got «%s», exp «%s»", test, pact, expPactP)
+			}
+			if !bytes.Equal(pactStr, expPactP) {
+				t.Errorf("«%s»: compact string got «%s», exp «%s»", test, pactStr, expPactP)
+			}
+		})
 	}
 }
 
