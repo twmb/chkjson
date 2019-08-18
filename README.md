@@ -33,7 +33,11 @@ various implementations.
 This is the type of code that truly is write once, maintain rarely. It
 implements validating (and compacting) to spec. The current tests are
 comprehensive, the parsers have been fuzzed, and the implementation is nearly
-as good as it gets without dropping into assembly.
+as good as it gets without dropping into assembly. Validating passes all
+required `y_` and `n_` files in [JSONTestSuite](https://github.com/nst/JSONTestSuite),
+and compacting followed by unmarshalling for all of these files matches stdlib
+unmarshalling.
+
 
 ## Why not this package?
 
