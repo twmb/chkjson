@@ -16,8 +16,7 @@ import (
 // is used as both src and dst.
 //
 // This function does not escape line-separator or paragraph-separator
-// characters, which can be problematic for JSONP. If conversion is necessary,
-// use AppendCompactJSONP.
+// characters.
 //
 // If simply compacting a slice in place, it is recommended to use Compact.
 func AppendCompact(dst, src []byte) ([]byte, bool) {
@@ -27,41 +26,7 @@ func AppendCompact(dst, src []byte) ([]byte, bool) {
 // AppendCompactString is exactly like AppendCompact but for compacting
 // strings.
 func AppendCompactString(dst []byte, src string) ([]byte, bool) {
-	dst, at, ok := packAny(dst, src, 0, false)
-	if !ok {
-		return nil, false
-	}
-
-	for ; at < len(src); at++ {
-		switch src[at] {
-		case '\t', '\n', '\r', ' ':
-		default:
-			return nil, false
-		}
-	}
-	return dst, true
-}
-
-// AppendCompactJSONP is similar to AppendCompact, but this function escapes
-// line-separator and paragraph-separator characters. See the documentation of
-// AppendCompact for more details.
-//
-// It is still valid to pass (src[:0], src) to this function even though the
-// six escaped characters replacing line-separator and paragraph-separator
-// (each three bytes) are longer than the original unescaped three. If the
-// encoding cannot fit three new characters into itself without overwriting its
-// src position, it will reallocate a new slice and eventually return that.
-//
-// This function returns the new or the updated slice and whether the input
-// source was valid JSON. If validation fails, this returns nil.
-func AppendCompactJSONP(dst, src []byte) ([]byte, bool) {
-	return AppendCompactJSONPString(dst, *(*string)(unsafe.Pointer(&src)))
-}
-
-// AppendCompactJSONPString is exactly like AppendCompactJSONP but for
-// compacting strings.
-func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
-	dst, at, ok := packAny(dst, src, 0, true)
+	dst, at, ok := packAny(dst, src, 0)
 	if !ok {
 		return nil, false
 	}
@@ -78,10 +43,7 @@ func AppendCompactJSONPString(dst []byte, src string) ([]byte, bool) {
 
 // As in chkjson.go, this function is super ugly. It is mostly a copy of
 // chkjson's any but we keep bytes as appropriate.
-//
-// Where possible, we append spans of memory at a time (via start and at).
-// jsonp makes string parsing quite ugly.
-func packAny(dst []byte, src string, at int, jsonp bool) ([]byte, int, bool) {
+func packAny(dst []byte, src string, at int) ([]byte, int, bool) {
 	start := at
 	var c byte
 	var ok bool
@@ -174,38 +136,6 @@ finStr:
 			default:
 				return nil, 0, false
 			}
-		default:
-			if !jsonp || src[at] != 0xe2 || at+2 >= len(src) {
-				continue
-			}
-
-			// encoding/json's Compact changes 0xe280a{8,9} to
-			// `\u2028` or `\u2029`, turning 3 bytes into 6. We
-			// allow using src[:0] as dst, so we must not clobber
-			// what we have yet to read.
-			if n1, n2 := src[at+1], src[at+2]; n1 == 0x80 && n2&^1 == 0xa8 {
-				dst, start = append(dst, src[start:at]...), at
-
-				overlapMin := len(dst) + 3
-				if overlapMin <= cap(dst) {
-					overlapTest := dst[len(dst):overlapMin]
-					for i := 0; i < len(overlapTest); i++ {
-						overlapTest[i] = 0
-						if src[at] == 0 { // we just modified src by changing dst; these regions overlap
-							new := make([]byte, len(dst), cap(dst))
-							copy(new, dst)
-							dst = new
-							break
-						}
-					}
-				}
-
-				dst = append(dst, '\\', 'u', '2', '0', '2', '8'|n2&1)
-				start += 3
-				at += 3 // 0xe2, 0x80, 0xa{8,9}
-
-				goto finStr
-			}
 		}
 	}
 	return nil, 0, false
@@ -257,31 +187,6 @@ finObjKey:
 			default:
 				return nil, 0, false
 			}
-		default:
-			if !jsonp || src[at] != 0xe2 || at+2 >= len(src) {
-				continue
-			}
-			if n1, n2 := src[at+1], src[at+2]; n1 == 0x80 && n2&^1 == 0xa8 {
-				dst, start = append(dst, src[start:at]...), at
-				overlapMin := len(dst) + 3
-				if overlapMin <= cap(dst) {
-					overlapTest := dst[len(dst):overlapMin]
-					for i := 0; i < len(overlapTest); i++ {
-						overlapTest[i] = 0
-						if src[at] == 0 {
-							new := make([]byte, len(dst), cap(dst))
-							copy(new, dst)
-							dst = new
-							break
-						}
-					}
-				}
-				dst = append(dst, '\\', 'u', '2', '0', '2', '8'|n2&1)
-				start += 3
-				at += 3
-
-				goto finObjKey
-			}
 		}
 	}
 	return nil, 0, false
@@ -299,7 +204,7 @@ finObjSep:
 	}
 
 objAny:
-	if dst, at, ok = packAny(dst, src, at, jsonp); !ok {
+	if dst, at, ok = packAny(dst, src, at); !ok {
 		return nil, 0, false
 	}
 
@@ -344,7 +249,7 @@ finArr:
 	}
 
 arrAny:
-	if dst, at, ok = packAny(dst, src, at, jsonp); !ok {
+	if dst, at, ok = packAny(dst, src, at); !ok {
 		return nil, 0, false
 	}
 

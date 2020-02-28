@@ -4,8 +4,6 @@ package chkjson
 // slice was valid JSON. If it was invliad, this returns nil.
 //
 // This is similar to AppendCompact(b[:0], b), but is faster and more intuitive.
-//
-// This function purely compacts; it does nothing about JSONP separators.
 func Compact(b []byte) ([]byte, bool) {
 	w, r, ok := compact(b, 0, 0)
 	if !ok {

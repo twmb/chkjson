@@ -3,57 +3,9 @@ package chkjson
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 	"testing"
 	"unsafe"
 )
-
-func TestCompactSeparators(t *testing.T) {
-	tests := []struct {
-		in, exp string
-	}{
-		{"{\"\u2028\":1}", `{"\u2028":1}`},
-		{"{\"\u2029\":2}", `{"\u2029":2}`},
-	}
-	for _, test := range tests {
-		for i := 0; i < 10; i++ {
-			in := []byte(strings.Repeat(" ", i) + test.in)
-			realloc := i <= 2
-
-			inaddr := uintptr(unsafe.Pointer(&in[0]))
-
-			gotOrig, ok := AppendCompact(nil, in)
-			if !ok {
-				t.Error("AppendCompact: unexpected not ok")
-			}
-
-			if !bytes.Equal(gotOrig, []byte(test.in)) {
-				t.Errorf("AppendCompact: got %q != exp %q", gotOrig, test.in)
-			}
-
-			got, ok := AppendCompactJSONP(in[:0], in)
-
-			if !ok {
-				t.Fatal("AppendCompactJSONP: unexpected not ok")
-			}
-
-			gotaddr := uintptr(unsafe.Pointer(&got[0]))
-			if realloc {
-				if inaddr == gotaddr {
-					t.Errorf("expected realloc with %d leading spaces", i)
-				}
-			} else {
-				if inaddr != gotaddr {
-					t.Errorf("unexpected realloc with %d leading spaces", i)
-				}
-			}
-
-			if !bytes.Equal(got, []byte(test.exp)) {
-				t.Errorf("got %q != exp %q", got, test.exp)
-			}
-		}
-	}
-}
 
 func TestCompact(t *testing.T) {
 	for i := 0; i < 5; i++ {

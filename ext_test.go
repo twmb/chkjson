@@ -45,10 +45,10 @@ func TestExtAppendCompact(t *testing.T) {
 	}
 }
 
-func TestExtAppendCompactJSONP(t *testing.T) {
+func TestExtAppendCompactJSON(t *testing.T) {
 	for fname, bs := range extFiles {
 		t.Run(fname, func(t *testing.T) {
-			got, valid := AppendCompactJSONP(nil, bs)
+			got, valid := AppendCompact(nil, bs)
 			if !valid {
 				t.Errorf("%s unexpectedly invalid!", fname)
 			}
