@@ -41,6 +41,7 @@ func TestMost(t *testing.T) {
 		"  0 ",
 		" 0e1 ",
 		"1.",
+		"1z",
 		" 0e+0 ",
 		" -0e+0 ",
 		"-0",

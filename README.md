@@ -1,7 +1,7 @@
 chkjson
 =======
 
-[![GoDoc](https://godoc.org/github.com/twmb/chkjson?status.svg)](https://godoc.org/github.com/twmb/chkjson) [![Build Status](https://travis-ci.org/twmb/chkjson.svg?branch=master)](https://travis-ci.org/twmb/chkjson)
+[![GoDoc](https://godoc.org/github.com/twmb/chkjson?status.svg)](https://godoc.org/github.com/twmb/chkjson)
 
 This repo / package provides alternatives to Go's
 [encoding/json](https://golang.org/pkg/encoding/json/) package for validating
